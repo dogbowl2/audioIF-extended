@@ -56,6 +56,7 @@ An Android app for playing interactive fiction (Z-machine games such as Zork) by
 - `WalkthroughIndex.fromRun` drops global fields that only rise (the score), so goals don't depend on the player's score.
 - `HintAdvisor.exitNeeds` records walkthrough steps done in a room before its exit was first used (tie rope before Dome Room "d"); routes avoid those exits until the step's goal is met, or add "first try: …".
 - "You'll have to X first" is remembered (`CommandSession.neededFirst`); a following rejected command naming the same thing runs X.
+- Audio mode speaks `Narration.forSpeech(text)`, not the raw text: no "> command" echoes, no room title the description repeats. It also enables `CommandSession.setListThings`, which adds "Things here: …" after moves and looks (the play harness enables it too).
 - ZMPP's random generator isn't saved in snapshots, so exploring or retrying changes later random events. The replay retries failed steps from earlier snapshots.
 - "help" describes the current situation (`CommandSession.situation`: room, visible things, exits, things to try); "hint" gives walkthrough hints; "how do I play" reads the guide. Fetch walkthroughs before building an APK for the phone, or hints are missing.
 - Some walkthrough goals become impossible (Zork I's broken egg is a different object). `HintAdvisor.skipHintedIfStuck` skips a goal when the hinted command gets an "already…" reply but the state doesn't match.

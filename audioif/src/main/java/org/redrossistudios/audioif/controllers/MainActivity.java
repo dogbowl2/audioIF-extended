@@ -85,8 +85,14 @@ public class MainActivity extends AppCompatActivity implements TextToSpeech.OnIn
     private MainActivity activity;
 
     private static final int MAX_FAILED_LISTENS = 3;
+    // How long the app keeps listening quietly while the player says nothing.
+    private static final long QUIET_LISTEN_MS = 60000;
+    private static final long QUIET_RESTART_DELAY_MS = 400;
     private int failedListens = 0;
     private boolean paused = false;
+    private boolean speechStarted = false;
+    private long quietSince = 0;
+    private final android.os.Handler handler = new android.os.Handler(android.os.Looper.getMainLooper());
 
     private void createRecognizer() {
         if (speechRecognizer != null) {
@@ -115,6 +121,10 @@ public class MainActivity extends AppCompatActivity implements TextToSpeech.OnIn
                     new ArrayList<>(session.speechHints()));
         }
         isListening = true;
+        speechStarted = false;
+        if (quietSince == 0) {
+            quietSince = System.currentTimeMillis();
+        }
         setStatus("Listening\u2026 say a command");
         speechRecognizer.startListening(intent);
     }
@@ -138,6 +148,7 @@ public class MainActivity extends AppCompatActivity implements TextToSpeech.OnIn
     // are queued so they play after whatever is already speaking instead of cutting it off.
     private void speakThenListen(String text, boolean startsNewResponse) {
         stopVoiceInput();
+        quietSince = 0;
         String utteranceId = "utterance-" + (++utteranceCounter);
         pendingUtteranceId = utteranceId;
         int queueMode = startsNewResponse ? TextToSpeech.QUEUE_FLUSH : TextToSpeech.QUEUE_ADD;
@@ -163,7 +174,9 @@ public class MainActivity extends AppCompatActivity implements TextToSpeech.OnIn
         public void onReadyForSpeech(Bundle params) { }
 
         @Override
-        public void onBeginningOfSpeech() { }
+        public void onBeginningOfSpeech() {
+            speechStarted = true;
+        }
 
         @Override
         public void onRmsChanged(float rmsdB) { }
@@ -195,6 +208,26 @@ public class MainActivity extends AppCompatActivity implements TextToSpeech.OnIn
                     || error == SpeechRecognizer.ERROR_SERVER_DISCONNECTED) {
                 // Restarting a recognizer in this state just fails again, so start fresh.
                 createRecognizer();
+            }
+            // The recognizer often gives up (client error, no match) before the player has said
+            // anything, for example while they're thinking. That isn't a miss, so listen again
+            // quietly instead of saying "Sorry, I didn't catch that".
+            if (!speechStarted && isQuietError(error)
+                    && System.currentTimeMillis() - quietSince < QUIET_LISTEN_MS) {
+                setStatus("Listening\u2026 say a command");
+                handler.postDelayed(new Runnable() {
+                    @Override
+                    public void run() {
+                        if (!isListening && pendingUtteranceId == null && !paused && !isFinishing()) {
+                            startVoiceInput();
+                        }
+                    }
+                }, QUIET_RESTART_DELAY_MS);
+                return;
+            }
+            if (!speechStarted && isQuietError(error)) {
+                pauseListening();
+                return;
             }
             retryOrPause();
         }
@@ -230,7 +263,18 @@ public class MainActivity extends AppCompatActivity implements TextToSpeech.OnIn
             speakThenListen("Sorry, I didn't catch that. Please try again.", false);
             return;
         }
+        pauseListening();
+    }
+
+    private static boolean isQuietError(int error) {
+        return error == SpeechRecognizer.ERROR_CLIENT || error == SpeechRecognizer.ERROR_NO_MATCH
+                || error == SpeechRecognizer.ERROR_SPEECH_TIMEOUT || error == SpeechRecognizer.ERROR_RECOGNIZER_BUSY
+                || error == SpeechRecognizer.ERROR_SERVER_DISCONNECTED;
+    }
+
+    private void pauseListening() {
         failedListens = 0;
+        quietSince = 0;
         pendingUtteranceId = null;
         log("I'll stop listening for now. Tap the story when you're ready.");
         tts.speak("I'll stop listening for now. Tap the story when you're ready.",
@@ -319,6 +363,7 @@ public class MainActivity extends AppCompatActivity implements TextToSpeech.OnIn
                         tts.stop();
                     }
                     else{
+                        quietSince = 0;
                         startVoiceInput();
                     }
                 }
@@ -383,6 +428,7 @@ public class MainActivity extends AppCompatActivity implements TextToSpeech.OnIn
         super.onResume();
         paused = false;
         failedListens = 0;
+        quietSince = 0;
         if (playLog != null) {
             playLog.event("app in foreground");
         }
@@ -393,6 +439,7 @@ public class MainActivity extends AppCompatActivity implements TextToSpeech.OnIn
 
     @Override
     public void onDestroy() {
+        handler.removeCallbacksAndMessages(null);
         if (speechRecognizer != null) {
             isListening = false;
             speechRecognizer.destroy();

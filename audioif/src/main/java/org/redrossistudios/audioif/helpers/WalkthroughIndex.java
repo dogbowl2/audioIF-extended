@@ -65,7 +65,7 @@ public final class WalkthroughIndex {
         }
     }
 
-    static final int FORMAT = 7;
+    static final int FORMAT = 8;
     private static final String[] PROBES = {"n", "s", "e", "w", "ne", "nw", "se", "sw", "u", "d"};
     private static final int MAX_MAPPED_ROOMS = 400;
     private static final Pattern DARK = Pattern.compile("(?is).*\\b(pitch black|too dark)\\b.*");
@@ -85,6 +85,7 @@ public final class WalkthroughIndex {
             "(?i)\\b(can't|cannot|can not|won't|isn't|aren't|doesn't|don't|not|nothing|no)\\b");
     private static final double VOLATILE_SHARE = 0.2;
     private static final int MAX_CHANGES = 4;
+    private static final int MIN_COUNTER_RISES = 3;
     private static final Pattern NO_EFFECT_EXPECTED = Pattern.compile(
             "^(wait|z|look|l|examine|x|read|listen|smell|inventory|i|again|g|diagnose|score)\\b.*");
     private static final Pattern WAIT_OR_FIGHT = Pattern.compile("^(wait|z|kill|attack|fight|hit|stab|slay)\\b.*");
@@ -491,6 +492,27 @@ public final class WalkthroughIndex {
             }
         }
         int limit = (int) Math.ceil(run.changed.size() * VOLATILE_SHARE);
+        // Globals that only ever go up (the score) depend on what else the player did first.
+        int[] last = new int[fieldCount];
+        int[] rises = new int[fieldCount];
+        boolean[] fell = new boolean[fieldCount];
+        for (int i = 0; i < run.changed.size(); i++) {
+            int[] changed = run.changed.get(i);
+            for (int f = 0; f < changed.length; f++) {
+                int field = changed[f];
+                int value = run.values.get(i)[f];
+                if (rises[field] > 0 && value < last[field]) {
+                    fell[field] = true;
+                }
+                rises[field]++;
+                last[field] = value;
+            }
+        }
+        for (int field = Math.max(0, fieldCount - GameStateReader.GLOBALS_FROM_END); field < fieldCount; field++) {
+            if (rises[field] >= MIN_COUNTER_RISES && !fell[field]) {
+                counts[field] = Integer.MAX_VALUE;
+            }
+        }
         List<Step> steps = new ArrayList<>();
         for (int i = 0; i < run.changed.size(); i++) {
             int[] changed = run.changed.get(i);

@@ -28,6 +28,13 @@ public class SpeechMatcherTest {
     };
 
     @Test
+    public void ranksCorrectedAlternativesBestFirst() {
+        assertEquals(Arrays.asList("take the lamp", "take the zz"),
+                SpeechMatcher.rank(Arrays.asList("take the zz", "take the lamp", "take the lamp"), VOCABULARY));
+        assertEquals(1, SpeechMatcher.unknownWords("take the zz", VOCABULARY));
+    }
+
+    @Test
     public void joinsSplitGameWords() {
         assertEquals("open the mailbox", SpeechMatcher.correct("open the mail box", VOCABULARY));
         assertEquals("read the leaflet", SpeechMatcher.correct("read the leaf lit", VOCABULARY));

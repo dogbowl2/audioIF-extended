@@ -3,6 +3,7 @@ package org.redrossistudios.audioif.helpers;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
@@ -73,17 +74,24 @@ public final class SpeechMatcher {
 
     /**
      * Returns the alternative that best fits the vocabulary, already corrected: fewest unknown
-     * words, then most words naming things the player can see, then fewest changes.
+     * words, then most words naming things the player can see, then fewest changes, then
+     * fewest words only the app knows.
      * The first alternative wins ties, since the recognizer ranks them.
      */
     public static String choose(List<String> alternatives, Vocabulary vocabulary) {
-        String best = null;
-        int bestUnknown = Integer.MAX_VALUE;
-        int bestVisible = -1;
-        int bestAppOnly = Integer.MAX_VALUE;
-        int bestChanges = Integer.MAX_VALUE;
+        List<String> ranked = rank(alternatives, vocabulary);
+        return ranked.isEmpty() ? "" : ranked.get(0);
+    }
+
+    /**
+     * The distinct corrected alternatives, best first (see {@link #choose}). Alternatives that
+     * still contain words nobody knows come last.
+     */
+    public static List<String> rank(List<String> alternatives, Vocabulary vocabulary) {
+        final List<String> texts = new ArrayList<>();
+        final List<int[]> scores = new ArrayList<>();
         if (alternatives == null) {
-            return "";
+            return texts;
         }
         for (String alternative : alternatives) {
             if (alternative == null || alternative.trim().isEmpty()) {
@@ -91,8 +99,9 @@ public final class SpeechMatcher {
             }
             int[] counts = new int[2];
             String corrected = correct(alternative, vocabulary, counts);
-            int unknown = counts[0];
-            int changes = counts[1];
+            if (texts.contains(corrected)) {
+                continue;
+            }
             int visible = 0;
             int appOnly = 0;
             for (String word : corrected.split(" ")) {
@@ -103,17 +112,35 @@ public final class SpeechMatcher {
                     appOnly++;
                 }
             }
-            if (unknown < bestUnknown || unknown == bestUnknown && (visible > bestVisible
-                    || visible == bestVisible && (appOnly < bestAppOnly
-                    || appOnly == bestAppOnly && changes < bestChanges))) {
-                best = corrected;
-                bestUnknown = unknown;
-                bestVisible = visible;
-                bestAppOnly = appOnly;
-                bestChanges = changes;
-            }
+            texts.add(corrected);
+            scores.add(new int[]{counts[0], -visible, counts[1], appOnly, texts.size()});
         }
-        return best == null ? "" : best;
+        List<Integer> order = new ArrayList<>();
+        for (int i = 0; i < texts.size(); i++) {
+            order.add(i);
+        }
+        Collections.sort(order, (a, b) -> {
+            int[] x = scores.get(a);
+            int[] y = scores.get(b);
+            for (int k = 0; k < x.length; k++) {
+                if (x[k] != y[k]) {
+                    return Integer.compare(x[k], y[k]);
+                }
+            }
+            return 0;
+        });
+        List<String> ranked = new ArrayList<>();
+        for (int i : order) {
+            ranked.add(texts.get(i));
+        }
+        return ranked;
+    }
+
+    /** The number of words in the text that no vocabulary knows. */
+    public static int unknownWords(String text, Vocabulary vocabulary) {
+        int[] counts = new int[2];
+        correct(text, vocabulary, counts);
+        return counts[0];
     }
 
     /** Replaces misheard words with game words that sound alike. */

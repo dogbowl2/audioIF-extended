@@ -33,6 +33,7 @@ import org.redrossistudios.audioif.helpers.FileScanner;
 import org.redrossistudios.audioif.helpers.VoiceSettings;
 import org.redrossistudios.audioif.helpers.SavedGameManager;
 import org.redrossistudios.audioif.helpers.HintLoader;
+import org.redrossistudios.audioif.helpers.Narration;
 import org.redrossistudios.audioif.helpers.PlayLog;
 import org.redrossistudios.audioif.helpers.StoryFileTypeChecker;
 import org.redrossistudios.audioif.helpers.ZGame;
@@ -153,8 +154,12 @@ public class MainActivity extends AppCompatActivity implements TextToSpeech.OnIn
         pendingUtteranceId = utteranceId;
         int queueMode = startsNewResponse ? TextToSpeech.QUEUE_FLUSH : TextToSpeech.QUEUE_ADD;
         setStatus("Reading\u2026 tap to skip");
-        log(text);
-        tts.speak(text, queueMode, null, utteranceId);
+        String spoken = Narration.forSpeech(text);
+        if (spoken.isEmpty()) {
+            spoken = text.replace(">", "").trim();
+        }
+        log(spoken);
+        tts.speak(spoken, queueMode, null, utteranceId);
     }
 
     private void onUtteranceFinished(final String utteranceId) {
@@ -342,6 +347,7 @@ public class MainActivity extends AppCompatActivity implements TextToSpeech.OnIn
             executionControl.run();
             game = new ZGame(executionControl, screenModel);
             session = new CommandSession(game);
+            session.setListThings(true);
             HintLoader.start(this, filePath, session);
             playLog = new PlayLog(logFolder(this), new File(filePath).getName());
             button.setOnClickListener(new View.OnClickListener() {

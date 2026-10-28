@@ -70,6 +70,7 @@ public class PlayHarness {
         ZGame game = new ZGame(executionControl, screenModel);
         String intro = game.readIntro();
         CommandSession session = new CommandSession(game);
+        session.setListThings(true);
         session.start(intro);
         // Walkthrough hints, as in the app, when tools/fetch-walkthroughs.ps1 has fetched one.
         File storyFile = new File(gamePath);

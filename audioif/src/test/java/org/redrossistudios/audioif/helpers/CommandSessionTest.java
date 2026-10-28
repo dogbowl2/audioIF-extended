@@ -658,6 +658,26 @@ public class CommandSessionTest {
     }
 
     @Test
+    public void listsThingsAfterAMoveOrLook() {
+        session.setListThings(true);
+        game.things.add("brass lamp");
+        game.replies.put("look", "Field\nThere is a brass lamp here.");
+        assertEquals("Things here: the brass lamp.", lastNote(session.handle("look")));
+        assertEquals(null, lastNote(session.handle("go north")));
+        assertEquals(null, lastNote(session.handle("take the lamp")));
+    }
+
+    private static String lastNote(CommandSession.Result result) {
+        String note = null;
+        for (CommandSession.Exchange exchange : result.exchanges) {
+            if (exchange.note != null) {
+                note = exchange.note;
+            }
+        }
+        return note;
+    }
+
+    @Test
     public void roomNameRunTogetherIsStillFound() {
         game.exit("Field", "D", "Living Room");
         game.exit("Living Room", "U", "Field");

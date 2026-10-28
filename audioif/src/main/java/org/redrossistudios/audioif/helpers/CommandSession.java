@@ -486,6 +486,7 @@ public final class CommandSession {
             text = padded.group(1);
         }
 
+        String roomBefore = room;
         boolean snapshot = takeSnapshot(text);
         String needed = neededFirst;
         runClauses(text, result);
@@ -512,6 +513,14 @@ public final class CommandSession {
         }
         if (!changed && snapshot) {
             undo.pop();
+        }
+        if (listThings && !result.rejected && room != null
+                && (!room.equals(roomBefore) || result.sentCommands().contains("look")
+                        || result.sentCommands().contains("l"))) {
+            String things = thingsNote();
+            if (things != null) {
+                result.note(things);
+            }
         }
         rejectedInARow = result.rejected ? rejectedInARow + 1 : 0;
         if (rejectedInARow == 2) {
@@ -1713,6 +1722,31 @@ public final class CommandSession {
             text.append("Say how do I play to learn more commands.");
         }
         return text.toString().trim();
+    }
+
+    private boolean listThings;
+
+    /**
+     * After a move or "look", add a note naming the things here ("Things here: the mailbox and
+     * the door."), so a listener knows which words to use without seeing the text.
+     */
+    public void setListThings(boolean listThings) {
+        this.listThings = listThings;
+    }
+
+    private String thingsNote() {
+        String text = roomDescription == null ? "" : " " + roomDescription.toLowerCase(Locale.ROOT)
+                .replaceAll("[^a-z]+", " ") + " ";
+        List<String> named = new ArrayList<>();
+        for (String thing : visibleThings()) {
+            String noun = nounOf(thing);
+            // "There is no door here" doesn't put a door here.
+            if (noun != null && text.contains(" " + noun + " ")
+                    && !text.matches(".* no (?:[a-z]+ )?" + noun + " .*")) {
+                named.add("the " + thing);
+            }
+        }
+        return named.isEmpty() ? null : "Things here: " + spokenList(named, "and") + ".";
     }
 
     // Names of things in the room that the game has mentioned, so hidden objects stay hidden.

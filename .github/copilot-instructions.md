@@ -63,6 +63,8 @@ An Android app for playing interactive fiction (Z-machine games such as Zork) by
 - The app's own words (help, hint, undo) must not be `SpeechMatcher` candidates, or game verbs such as "hang" get corrected to them.
 - Zork's "swing the sword" only says "Whoosh!"; `CommandSession` turns it into an attack only while the object tree (`thingsHere`) holds a creature, so a dead troll isn't attacked again.
 - Speech: on ERROR_CLIENT, busy or disconnected errors the recognizer is recreated. Errors before the player starts speaking restart listening quietly (no "sorry"); after 60 s of those, listening pauses. Otherwise listening pauses after 3 misses in a row, or while the app is in the background.
+- `CommandSession.handle` answers "repeat" and "say the description" itself (from `lastText` and `roomDescription`) before `handleCommand` runs. Add new app-only phrases as patterns over canonical text (`CommandNormalizer.canonicalize` expands contractions and turns "that" into "the").
+- `HintAdvisor.goalRoom` points "get X" hints at the room X is in now, read from the object-parent field in the state vector.
 
 ## Current state and open ideas (October 2026)
 - Version 2.0 is merged to `main`. The build with the version label hasn't been installed on the phone yet.

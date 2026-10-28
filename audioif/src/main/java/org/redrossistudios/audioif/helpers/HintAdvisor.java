@@ -108,6 +108,43 @@ public final class HintAdvisor {
 
     private void countId(String id) {
         idsByName.computeIfAbsent(roomName(id).toLowerCase(Locale.ROOT), k -> new HashSet<>()).add(id);
+        int hash = id.lastIndexOf('#');
+        if (hash >= 0) {
+            try {
+                roomsByObject.put(Integer.parseInt(id.substring(hash + 1)), id);
+            } catch (NumberFormatException ignored) {
+                // Not an object number.
+            }
+        }
+    }
+
+    // Room object number -> room id ("Egyptian Room#123").
+    private final Map<Integer, String> roomsByObject = new HashMap<>();
+
+    /**
+     * Where the goal should be done. For "get the knife" that is the room the knife lies in
+     * now, if the player carried it off and dropped it in another room the replay visited.
+     */
+    private String goalRoom(WalkthroughIndex.Step goal, int[] state) {
+        if (state == null || goal.room == null || !goal.command.matches("(?i)(get|take|pick up) .*")) {
+            return goal.room;
+        }
+        int objects = state.length - GameStateReader.GLOBALS_FROM_END;
+        int perObject = objects % 33 == 0 ? 33 : objects % 49 == 0 ? 49 : -1;
+        if (perObject < 0) {
+            return goal.room;
+        }
+        for (int f = 0; f < goal.fields.length; f++) {
+            int field = goal.fields[f];
+            if (field >= objects || field % perObject != 0 || state[field] == goal.values[f]) {
+                continue;
+            }
+            String now = roomsByObject.get(state[field]);
+            if (now != null && !now.equals(goal.room)) {
+                return now;
+            }
+        }
+        return goal.room;
     }
 
     /** Lower-case names of every room the walkthrough visits. */
@@ -151,7 +188,7 @@ public final class HintAdvisor {
         if (lastTarget < 0 || place == null || room == null) {
             return null;
         }
-        String goalRoom = index.steps.get(lastTarget).room;
+        String goalRoom = goalRoom(index.steps.get(lastTarget), state);
         if (goalRoom == null) {
             return null;
         }
@@ -252,9 +289,10 @@ public final class HintAdvisor {
     private String hintFor(int target, int shown, int[] state, String room,
                            Map<String, Map<String, String>> knownExits) {
         WalkthroughIndex.Step goal = index.steps.get(target);
+        String goalRoom = goalRoom(goal, state);
         // Rooms can share a name (Zork I has two Clearings and several Forests), so compare ids.
         String at = roomId(room, state);
-        boolean here = goal.room == null || at == null || goal.room.equalsIgnoreCase(at);
+        boolean here = goalRoom == null || at == null || goalRoom.equalsIgnoreCase(at);
         if (here) {
             switch (shown) {
                 case 0:
@@ -265,14 +303,14 @@ public final class HintAdvisor {
                     return "Try: " + goal.command + ".";
             }
         }
-        String place = roomName(goal.room);
+        String place = roomName(goalRoom);
         switch (shown) {
             case 0:
                 return "Your next step is somewhere else, at " + place + "." + " Say hint again for directions.";
             case 1:
-                return directions(at, goal.room, knownExits, state) + " Say hint again to hear what to do there.";
+                return directions(at, goalRoom, knownExits, state) + " Say hint again to hear what to do there.";
             default:
-                return "At " + place + ", try: " + goal.command + ". " + directions(at, goal.room, knownExits, state);
+                return "At " + place + ", try: " + goal.command + ". " + directions(at, goalRoom, knownExits, state);
         }
     }
 

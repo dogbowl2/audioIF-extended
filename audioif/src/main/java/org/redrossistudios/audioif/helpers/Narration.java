@@ -36,7 +36,8 @@ public final class Narration {
                 out.add("");
                 continue;
             }
-            if (isTitle(line) && namedIn(line, paragraphAfter(lines, i))) {
+            if (isTitle(line) && isFullDescription(paragraphAfter(lines, i))
+                    && namedIn(line, paragraphAfter(lines, i))) {
                 continue;
             }
             if (Character.isLetterOrDigit(line.charAt(line.length() - 1))) {
@@ -72,6 +73,14 @@ public final class Narration {
             }
         }
         return true;
+    }
+
+    // "You are in the kitchen…", "This is a gazebo…": a description that says where you are. Not
+    // "Sitting on the kitchen table is:", which names the room only in passing.
+    private static boolean isFullDescription(String text) {
+        return text.trim().toLowerCase(Locale.ROOT).matches(
+                "(?s)(you are|you're|this is|you have (entered|come|reached)|you stand|you find yourself|"
+                        + "the room|the cave|the path|the tunnel|in front of you)\\b.*");
     }
 
     private static String paragraphAfter(String[] lines, int index) {

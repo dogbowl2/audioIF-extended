@@ -113,6 +113,12 @@ public final class CommandNormalizer {
         CONTRACTIONS.put("don't", "do not");
         CONTRACTIONS.put("can't", "cannot");
         CONTRACTIONS.put("won't", "will not");
+        CONTRACTIONS.put("we're", "we are");
+        CONTRACTIONS.put("you're", "you are");
+        CONTRACTIONS.put("they're", "they are");
+        CONTRACTIONS.put("we've", "we have");
+        CONTRACTIONS.put("isn't", "is not");
+        CONTRACTIONS.put("doesn't", "does not");
         CONTRACTIONS.put("gonna", "going to");
         CONTRACTIONS.put("wanna", "want to");
 
@@ -301,6 +307,12 @@ public final class CommandNormalizer {
         putExact("crawl up", "U");
         putExact("crawl down", "D");
         put("crawl", "climb");
+        // Zork only knows a bare "pray"; "pray at the altar" gets "I don't know the word".
+        for (String pray : new String[]{"pray at the altar", "pray at altar", "pray to the altar", "pray in the temple",
+                "pray to god", "pray to the gods", "pray here", "say a prayer", "say prayer", "kneel and pray",
+                "kneel", "pray at the alter", "pray to the alter", "prayer"}) {
+            putExact(pray, "pray");
+        }
         putExact("what is in", "look");
         putExact("what is inside", "look");
         putExact("what is on", "look");

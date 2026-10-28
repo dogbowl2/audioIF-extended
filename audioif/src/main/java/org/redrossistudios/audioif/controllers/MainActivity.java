@@ -392,6 +392,10 @@ public class MainActivity extends AppCompatActivity implements TextToSpeech.OnIn
                 session.start(recap);
                 storyField.setText(recap);
                 speakThenListen(AutoSave.RESUMED_NOTE, true);
+                String where = session.whereNote();
+                if (where != null) {
+                    speakThenListen(where, false);
+                }
                 if (!recap.isEmpty()) {
                     speakThenListen(recap, false);
                 }

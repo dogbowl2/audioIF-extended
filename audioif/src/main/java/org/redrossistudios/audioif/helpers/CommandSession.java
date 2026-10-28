@@ -158,7 +158,9 @@ public final class CommandSession {
     // "help" describes the situation; "how do I play" explains commands; "hint" uses the walkthrough.
     private static final Set<String> SITUATION_PHRASES = canonicalSet("help", "what can i do",
             "what can i do here", "what are my options", "options", "ideas", "give me ideas",
-            "what can i try", "what should i try", "suggestions", "suggest something");
+            "what can i try", "what should i try", "suggestions", "suggest something",
+            "what are my other options", "what other options", "other options", "what are the options",
+            "what else can i do", "what are my choices", "what can i do now", "what else");
     private static final Set<String> HELP_PHRASES = canonicalSet("commands", "more help", "help with commands",
             "what can i say", "how do i play", "how to play", "how does this work", "instructions",
             "list the commands", "what are the commands", "list commands", "command list", "verbs",
@@ -166,7 +168,18 @@ public final class CommandSession {
     private static final Set<String> HINT_PHRASES = canonicalSet("hint", "hints", "give me a hint",
             "i need a hint", "i am stuck", "clue", "give me a clue", "any hints", "what should i do",
             "what do i do", "what now", "now what", "what next", "what do i do next", "what should i do next",
-            "i do not know what to do", "help me", "i need help");
+            "i do not know what to do", "help me", "i need help", "we are stuck", "i think we are stuck",
+            "i think i am stuck", "i think we are stuck yeah", "this is complicated", "it is complicated");
+    // "I think we're stuck yeah", "will tell you what to do, hint".
+    private static final Pattern STUCK = Pattern.compile("^(?:.* )?(?:we are|i am|were|we re|im) (?:really |so |a bit |kind of )?stuck\\b.*$");
+    // "repeat", "say that description again": the app reads its last words again.
+    private static final Set<String> REPEAT_PHRASES = canonicalSet("repeat", "repeat that", "repeat it",
+            "repeat please", "please repeat", "say that again", "say it again", "say again", "come again",
+            "pardon", "pardon me", "what did you say", "what was that", "can you repeat that",
+            "could you repeat that", "repeat the last part", "one more time", "say what");
+    private static final Pattern REPEAT_DESCRIPTION = Pattern.compile(
+            "^(?:(?:say|read|repeat|tell me|give me)(?: me)?(?: the)?(?: room)? description|"
+                    + "describe the room|describe where i am|what does (?:the|this) room look like)$");
     private static final Set<String> UNDO_PHRASES = canonicalSet("undo", "undo that", "undo the last move",
             "undo last move", "undo the last turn", "take that back", "take back", "oops undo");
     private static final Set<String> BACK_PHRASES = canonicalSet("go back", "back", "return", "go back the way i came",
@@ -203,7 +216,10 @@ public final class CommandSession {
             "exits", "list the exits", "show the exits", "what directions can i go", "which directions",
             "which directions can i go", "which way", "which way now", "where to", "where does it go",
             "are there any exits", "what exits", "what are the ways out", "how do i get out",
-            "how do i leave", "where are the exits", "what way can i go");
+            "how do i leave", "where are the exits", "what way can i go", "which way should i go",
+            "which way should i go now", "where should i go", "where should i go now", "which way do i go",
+            "where do i go", "where do i go now", "which direction", "which direction should i go",
+            "which direction do i go", "where now", "where next", "which way next");
     private static final Set<String> CHATTER_STARTERS = set("i", "it", "that", "this", "because", "since",
             "cause", "which", "maybe", "hopefully", "probably", "you");
     // Zork's Loud Room answers every command with "bar bar ...".
@@ -241,7 +257,7 @@ public final class CommandSession {
     private static final Pattern LEAVE = Pattern.compile(
             "^(?:leave|exit|get out of|go out of|walk out of|step out of|head out of) (?:the )?(.+)$");
     private static final Set<String> QUESTION_WORDS = set("what", "where", "who", "why", "how",
-            "when", "which", "is", "are", "can", "could", "do", "does", "should");
+            "when", "which", "is", "are", "am", "can", "could", "do", "does", "should");
     private static final Set<String> PRONOUNS = set("it", "them", "him", "her");
     private static final Set<String> NOUN_STOPS = set("here", "there", "is", "are", "was", "and",
             "with", "in", "on", "of", "to", "from", "at", "by", "into", "it", "that", "which",
@@ -367,6 +383,11 @@ public final class CommandSession {
 
     private final Set<Integer> savedSkips = new HashSet<>();
 
+    /** "You're at Temple." after resuming a game, or null if the room isn't known. */
+    public String whereNote() {
+        return room == null ? null : "You're at " + HintAdvisor.roomName(room) + ".";
+    }
+
     /** Hint goals the player has done another way, as text to keep with the saved game. */
     public String hintSkips() {
         HintAdvisor advisor = hints;
@@ -407,6 +428,7 @@ public final class CommandSession {
     public void start(String introText) {
         learnVocabulary(introText);
         roomDescription = introText;
+        lastText = introText == null ? "" : introText.trim();
         String status = game.currentRoom();
         room = status != null ? status : lastRoomName(introText);
         if (room != null) {
@@ -431,6 +453,43 @@ public final class CommandSession {
     }
 
     public Result handle(String input) {
+        String canonicalInput = CommandNormalizer.canonicalize(input == null ? "" : input);
+        if (isRepeatRequest(canonicalInput)) {
+            Result again = new Result();
+            again.note(lastText.isEmpty() ? "There's nothing to repeat yet." : lastText);
+            return again;
+        }
+        if (isDescriptionRequest(canonicalInput)) {
+            Result again = new Result();
+            if (roomDescription == null || roomDescription.trim().isEmpty()) {
+                runCommand("look", again);
+            } else {
+                again.note(roomDescription.trim());
+            }
+            if (!again.text().isEmpty()) {
+                lastText = again.text();
+            }
+            return again;
+        }
+        Result result = handleCommand(input);
+        String said = result.text();
+        if (!said.isEmpty()) {
+            lastText = said;
+        }
+        return result;
+    }
+
+    private String lastText = "";
+
+    private boolean isRepeatRequest(String canonical) {
+        return REPEAT_PHRASES.contains(canonical) && !game.contains("repeat");
+    }
+
+    private static boolean isDescriptionRequest(String canonical) {
+        return REPEAT_DESCRIPTION.matcher(canonical).matches();
+    }
+
+    private Result handleCommand(String input) {
         Result result = new Result();
         String text = input == null ? "" : input.trim();
         List<String> offered = pending;
@@ -462,7 +521,7 @@ public final class CommandSession {
             result.note(HELP_TEXT);
             return result;
         }
-        if (HINT_PHRASES.contains(canonical) && !game.contains("hint")) {
+        if ((HINT_PHRASES.contains(canonical) || STUCK.matcher(canonical).matches()) && !game.contains("hint")) {
             result.note(hint());
             return result;
         }
@@ -490,6 +549,20 @@ public final class CommandSession {
         boolean snapshot = takeSnapshot(text);
         String needed = neededFirst;
         runClauses(text, result);
+        String[] spoken = canonical.split(" ");
+        String lastWord = spoken[spoken.length - 1];
+        // "will tell you what to do hint": a rambling request that ends asking for help.
+        if (result.rejected && onlyParserRejections(result) && spoken.length >= 3
+                && (lastWord.equals("hint") || lastWord.equals("help")) && !game.contains(lastWord)) {
+            pending = null;
+            Result helped = new Result();
+            helped.note(lastWord.equals("hint") ? hint() : situation());
+            rejectedInARow = 0;
+            if (snapshot) {
+                undo.pop();
+            }
+            return helped;
+        }
         // "how about ghosts, I said go south": a long sentence the game rejected, with a command
         // at the end. A parser rejection doesn't use a turn, so run that command instead. Not for
         // "frobnicate the box and go north": the player chose to chain those, so stop at the error.
@@ -590,16 +663,26 @@ public final class CommandSession {
     // Looks around and lists the exits the app has seen used from this room.
     private void describeExits(Result result) {
         runCommand("look", result);
+        String known = knownExits();
+        result.note(known != null ? known
+                : "The game describes the exits in the room description. Try a direction, like north or go up.");
+    }
+
+    // "Ways you have used from here: north to Kitchen.", or null if none are known.
+    private String knownExits() {
         Map<String, String> exits = room == null ? null : map.get(room);
         if (exits == null || exits.isEmpty()) {
-            result.note("The game describes the exits in the room description. Try a direction, like north or go up.");
-            return;
+            List<String> words = new ArrayList<>();
+            for (String exit : exitsHere()) {
+                words.add(spokenDirection(exit));
+            }
+            return words.isEmpty() ? null : "You can go " + spokenList(words, "or") + ".";
         }
         List<String> known = new ArrayList<>();
         for (Map.Entry<String, String> exit : exits.entrySet()) {
             known.add(spokenDirection(exit.getKey()) + " to " + exit.getValue());
         }
-        result.note("Ways you have used from here: " + String.join(", ", known) + ".");
+        return "Ways you have used from here: " + String.join(", ", known) + ".";
     }
 
     private static String spokenDirection(String key) {
@@ -656,6 +739,13 @@ public final class CommandSession {
                 ok = runCommand(lastMove.direction, result);
             }
             return ok;
+        }
+        if (CONTINUE_PHRASES.contains(canonical) && (canonical.contains(" ") || !game.contains(canonical))) {
+            // "keep going" after "cross the bridge": there's no compass direction to repeat.
+            String known = knownExits();
+            result.note("Which way? Say a direction, like north or go up."
+                    + (known != null ? " " + known : " The room description names the exits."));
+            return false;
         }
         Matcher examine = EXAMINE_PLACE.matcher(canonical);
         if (examine.matches() && isRoomItself(examine.group(1))) {
@@ -910,6 +1000,14 @@ public final class CommandSession {
         if (DARK.matcher(response).find()) {
             result.note(darkNote());
         }
+        if (response.toLowerCase(Locale.ROOT).contains("you must specify a direction")) {
+            String known = knownExits();
+            result.note("Say a direction, like north or go up." + (known != null ? " " + known : ""));
+            return true;
+        }
+        if (retryWithSingular(command, response, result)) {
+            return true;
+        }
         if (retryWithNoun(command, response, result)) {
             return true;
         }
@@ -1006,6 +1104,51 @@ public final class CommandSession {
             case "outside": case "exit": case "leave": return "OUT";
             default: return null;
         }
+    }
+
+    private static final Pattern UNKNOWN_WORD = Pattern.compile("(?i)i don't know the word \"([a-z]+)\"");
+
+    // "examine the bushes": Zork only knows "bush". Retry with the singular the game knows.
+    private boolean retryWithSingular(String command, String response, Result result) {
+        Matcher unknown = UNKNOWN_WORD.matcher(response.replace('\u2019', '\''));
+        if (!unknown.find()) {
+            return false;
+        }
+        String plural = unknown.group(1).toLowerCase(Locale.ROOT);
+        String singular = singularKnown(plural);
+        if (singular == null) {
+            return false;
+        }
+        String retried = command.toLowerCase(Locale.ROOT).replaceAll("\\b" + plural + "\\b", singular);
+        if (retried.equals(command.toLowerCase(Locale.ROOT))) {
+            return false;
+        }
+        String retryResponse = send(retried, result);
+        if (isRejected(retryResponse)) {
+            result.exchanges.remove(result.exchanges.size() - 1);
+            return false;
+        }
+        result.exchanges.remove(result.exchanges.size() - 2);
+        return true;
+    }
+
+    private String singularKnown(String plural) {
+        List<String> candidates = new ArrayList<>();
+        if (plural.endsWith("ies") && plural.length() > 4) {
+            candidates.add(plural.substring(0, plural.length() - 3) + "y");
+        }
+        if (plural.endsWith("es") && plural.length() > 3) {
+            candidates.add(plural.substring(0, plural.length() - 2));
+        }
+        if (plural.endsWith("s") && plural.length() > 2) {
+            candidates.add(plural.substring(0, plural.length() - 1));
+        }
+        for (String candidate : candidates) {
+            if (game.contains(candidate)) {
+                return candidate;
+            }
+        }
+        return null;
     }
 
     private boolean retryWithNoun(String command, String response, Result result) {
@@ -1229,7 +1372,9 @@ public final class CommandSession {
         String response = send(command, result);
         String target = findRoom(place);
         boolean stayed = before != null && before.equals(room);
-        if (!cantGo(response) && !(stayed && target != null && !target.equals(room))) {
+        // "It's here!" for "go to the gazebo" while standing beside it: nothing moved.
+        boolean itsHere = stayed && response.toLowerCase(Locale.ROOT).replace('\u2019', '\'').contains("it's here");
+        if (!cantGo(response) && !itsHere && !(stayed && target != null && !target.equals(room))) {
             return true;
         }
         // Either the game didn't understand, or it answered without moving ("It's here!")
@@ -1242,13 +1387,7 @@ public final class CommandSession {
             int[] state = advisor == null ? null : game.stateVector();
             List<String> nearby = state == null ? null : advisor.routeToRoom(place, room, state, MAX_UNSEEN_WALK);
             if (nearby != null) {
-                for (String step : nearby) {
-                    if (!runCommand(step, result)) {
-                        return false;
-                    }
-                }
-                result.note("You walk to " + room + ".");
-                return true;
+                return walkSteps(nearby, result);
             }
             result.exchanges.add(attempt);
             if (tryLandmark(CommandNormalizer.canonicalize(clause), result, mark)) {
@@ -1267,13 +1406,7 @@ public final class CommandSession {
                 while (result.exchanges.size() > mark) {
                     result.exchanges.remove(result.exchanges.size() - 1);
                 }
-                for (String step : hinted) {
-                    if (!runCommand(step, result)) {
-                        return false;
-                    }
-                }
-                result.note("You walk to " + room + ".");
-                return true;
+                return walkSteps(hinted, result);
             }
             result.rejected = true;
             result.note("I don't know a place called " + place + " yet. Try a direction, like north or go up.");
@@ -1306,6 +1439,20 @@ public final class CommandSession {
         return out.toString();
     }
 
+    // Runs a walkthrough route; says where the player got to only if they moved.
+    private boolean walkSteps(List<String> steps, Result result) {
+        String start = room;
+        for (String step : steps) {
+            if (!runCommand(step, result)) {
+                return false;
+            }
+        }
+        if (room != null && !room.equals(start)) {
+            result.note("You walk to " + room + ".");
+        }
+        return true;
+    }
+
     private boolean walkTo(String target, Result result) {
         if (target.equals(room)) {
             result.note("You are already in " + target + ".");
@@ -1313,6 +1460,13 @@ public final class CommandSession {
         }
         List<String> path = route(room, target);
         if (path == null) {
+            // Arrived some way the app's map can't retrace (praying at the altar): the walkthrough's map may know.
+            HintAdvisor advisor = hints;
+            int[] state = advisor == null ? null : game.stateVector();
+            List<String> steps = state == null ? null : advisor.routeToRoom(target, room, state, MAX_WALK);
+            if (steps != null) {
+                return walkSteps(steps, result);
+            }
             result.note("I don't know a way to " + target + " from here yet.");
             return false;
         }
@@ -1454,6 +1608,8 @@ public final class CommandSession {
             }
             if (SITUATION_PHRASES.contains(canonical) || HELP_PHRASES.contains(canonical)
                     || HINT_PHRASES.contains(canonical) || UNDO_PHRASES.contains(canonical)
+                    || STUCK.matcher(canonical).matches() || EXIT_QUESTIONS.contains(canonical)
+                    || isRepeatRequest(canonical) || isDescriptionRequest(canonical)
                     || isStop(canonical)) {
                 Result result = handle(alternative);
                 result.heard = canonical;

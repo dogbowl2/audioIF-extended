@@ -17,6 +17,14 @@ public class NarrationTest {
     }
 
     @Test
+    public void keepsTitleWhenTheRoomIsOnlyNamedInPassing() {
+        assertEquals("Kitchen.\nSitting on the kitchen table is:\nA brown sack.",
+                Narration.forSpeech("Kitchen\nSitting on the kitchen table is:\nA brown sack."));
+        assertEquals("Altar.\nOn the two ends of the altar are burning candles.",
+                Narration.forSpeech("Altar\nOn the two ends of the altar are burning candles."));
+    }
+
+    @Test
     public void keepsOtherTitlesWithAPause() {
         assertEquals("Round Room.", Narration.forSpeech("Round Room"));
         assertEquals("Up a Tree.\nYou are about 10 feet above the ground.",

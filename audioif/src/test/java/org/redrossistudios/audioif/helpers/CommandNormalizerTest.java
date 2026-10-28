@@ -21,6 +21,12 @@ public class CommandNormalizerTest {
     };
 
     @Test
+    public void mapsPrayingAtThings() {
+        assertEquals("pray", CommandNormalizer.normalize("pray at the altar", ALL_WORDS));
+        assertEquals("pray", CommandNormalizer.normalize("say a prayer", ALL_WORDS));
+    }
+
+    @Test
     public void mapsDirections() {
         assertEquals("NW", CommandNormalizer.normalize("North West", ALL_WORDS));
         assertEquals("NE", CommandNormalizer.normalize("northeast", ALL_WORDS));

@@ -667,6 +667,58 @@ public class CommandSessionTest {
         assertEquals(null, lastNote(session.handle("take the lamp")));
     }
 
+    @Test
+    public void repeatsTheLastReplyAndTheRoomDescription() {
+        String said = session.handle("go north").text();
+        assertEquals(said, session.handle("repeat that").text());
+        assertEquals(said, session.handleSpeech(Arrays.asList("say that again", "save that again")).text());
+        int sent = game.sent.size();
+        assertEquals("Path\nYou are in the path.",
+                session.handleSpeech(Arrays.asList("say that description again", "save that description again"))
+                        .text());
+        assertEquals(sent, game.sent.size());
+    }
+
+    @Test
+    public void answersWhichWayAndDirectionlessMoves() {
+        session.handle("north");
+        session.handle("south");
+        assertTrue(session.handle("which way should i go").text().contains("Ways you have used from here: north to Path."));
+        game.words.add("go");
+        game.replies.put("go", "You must specify a direction to go.");
+        assertTrue(session.handle("go").text().contains("Say a direction, like north or go up. Ways you have used"));
+        CommandSession fresh = new CommandSession(game);
+        fresh.start("Field\nYou are in a field.");
+        int sent = game.sent.size();
+        assertTrue(fresh.handle("keep going").text().startsWith("Which way?"));
+        assertEquals(sent, game.sent.size());
+    }
+
+    @Test
+    public void stuckAndOptionQuestionsDontReachTheGame() {
+        session.handle("what are my other options");
+        session.handleSpeech(Arrays.asList("I think we're stuck yeah"));
+        session.handle("i'm stuck");
+        assertTrue(game.sent.toString(), game.sent.isEmpty());
+        CommandSession.Result result = session.handle("will tell you what to do hint");
+        assertFalse(result.rejected);
+        assertFalse(result.text(), result.text().contains("I don't know the word"));
+    }
+
+    @Test
+    public void retriesPluralsWithTheSingular() {
+        game.words.add("bush");
+        game.replies.put("x the bush", "The bush is shaped like a dragon.");
+        CommandSession.Result result = session.handle("examine the bushes");
+        assertEquals(game.sent.toString(), "The bush is shaped like a dragon.", result.text());
+        assertFalse(result.rejected);
+    }
+
+    @Test
+    public void saysWhereThePlayerIs() {
+        assertEquals("You're at Field.", session.whereNote());
+    }
+
     private static String lastNote(CommandSession.Result result) {
         String note = null;
         for (CommandSession.Exchange exchange : result.exchanges) {

@@ -135,6 +135,22 @@ public class HintAdvisorTest {
     }
 
     @Test
+    public void sendsThePlayerToWhereTheyDroppedTheThing() {
+        WalkthroughIndex index = new WalkthroughIndex(Arrays.asList(
+                new WalkthroughIndex.Step("n", "Hall#1", "Attic#2", true, new int[0], new int[0]),
+                new WalkthroughIndex.Step("take knife", "Attic#2", null, new int[] {66}, new int[] {9})));
+        HintAdvisor advisor = new HintAdvisor(index);
+        int[] state = new int[3 * 33 + GameStateReader.GLOBALS_FROM_END];
+        state[66] = 1;
+        state[99] = 2;
+        assertEquals("Your next step is somewhere else, at Hall. Say hint again for directions.",
+                advisor.hint(state, "Attic", null));
+        state[66] = 2;
+        HintAdvisor inPlace = new HintAdvisor(index);
+        assertEquals(true, inPlace.hint(state, "Attic", null).startsWith("There's something to do right here."));
+    }
+
+    @Test
     public void onlyCheckedWaysBackAreUsed() {
         WalkthroughIndex index = new WalkthroughIndex(Arrays.asList(
                 new WalkthroughIndex.Step("n", "Field", "Path", true, new int[0], new int[0]),

@@ -52,7 +52,9 @@ public final class SpeechMatcher {
             "no", "yes", "be", "so", "or", "but", "for", "up", "down", "out", "off", "over", "under",
             // Conversation the app picks a command out of ("I said go south"), not game words.
             "said", "says", "took", "told", "tell", "meant", "mean", "need", "needed", "want", "know", "think",
-            "didn't", "don't", "why", "about", "just", "well", "they", "hey", "okay", "ok", "let's", "how"));
+            "didn't", "don't", "why", "about", "just", "well", "they", "hey", "okay", "ok", "let's", "how",
+            "we're", "i'm", "you're", "they're", "it's", "can't", "won't", "isn't", "we've", "i've", "i'll",
+            "we", "us", "stuck", "think", "were", "am"));
 
     static {
         String[][] pairs = {

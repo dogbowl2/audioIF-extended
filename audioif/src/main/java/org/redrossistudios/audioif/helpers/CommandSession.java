@@ -264,7 +264,8 @@ public final class CommandSession {
             "you can't go that way", "you must specify", "you hit your head", "i don't know the word",
             "there was no verb", "that sentence isn't one i recogni", "you can't see any such thing",
             "i only understood you as far as", "you used the word", "where do you want to go",
-            "you'll have to say which", "you can't go there", "you can't see any", "you should supply");
+            "you'll have to say which", "you can't go there", "you can't see any", "you should supply",
+            "you're not at", "you are not at");
     private static final Pattern GO_TO = Pattern.compile(
             "^(?:go|walk|head|run|travel|return|get|navigate|move|find the way|take me)"
                     + "(?: back)? (?:to|into|toward|towards) (?:the )?(.+)$");
@@ -329,6 +330,10 @@ public final class CommandSession {
     // Every command sent, so help suggests things the player hasn't tried yet.
     private final Set<String> triedCommands = new HashSet<>();
     private int rejectedInARow;
+    // What the game last said must be done first ("open the glass bottle"), or null.
+    private String neededFirst;
+    private static final Pattern MUST_FIRST = Pattern.compile(
+            "(?i)you'll have to ((?:open|unlock|take|get|remove|close) (?:the )?[a-z ]{1,30}?) first");
     private String room;
     private Move lastMove;
     private String lastNoun;
@@ -482,12 +487,18 @@ public final class CommandSession {
         }
 
         boolean snapshot = takeSnapshot(text);
+        String needed = neededFirst;
         runClauses(text, result);
         // "how about ghosts, I said go south": a long sentence the game rejected, with a command
         // at the end. A parser rejection doesn't use a turn, so run that command instead. Not for
         // "frobnicate the box and go north": the player chose to chain those, so stop at the error.
         String meant = result.rejected && result.sentCommands().size() <= 1
                 && !canonical.matches(".*\\b(?:and|then)\\b.*") ? commandInSentence(canonical) : null;
+        // "You'll have to open the glass bottle first." then a garbled "in the bottle".
+        if (meant == null && needed != null && result.rejected && onlyParserRejections(result)
+                && mentionsNoun(canonical, needed)) {
+            meant = needed;
+        }
         if (meant != null) {
             pending = null;
             result = new Result();
@@ -876,8 +887,15 @@ public final class CommandSession {
     private boolean runCommand(String command, Result result) {
         String response = send(command, result);
         if (ECHO.matcher(response).matches()) {
+            List<String> exits = new ArrayList<>();
+            for (String exit : exitsHere()) {
+                exits.add(spokenDirection(exit));
+            }
             String back = backDirection();
-            result.note(ECHO_NOTE + (back != null ? ", like go " + spokenDirection(back) + "." : "."));
+            if (exits.isEmpty() && back != null) {
+                exits.add(spokenDirection(back));
+            }
+            result.note(ECHO_NOTE + (exits.isEmpty() ? "." : ", like go " + spokenList(exits, "or") + "."));
             return true;
         }
         if (DARK.matcher(response).find()) {
@@ -944,6 +962,8 @@ public final class CommandSession {
             guessedExits.remove(before + "\t" + direction);
         }
         recentResponses.addLast(response == null ? "" : response);
+        Matcher first = response == null ? null : MUST_FIRST.matcher(response.replace('\u2019', '\''));
+        neededFirst = first != null && first.find() ? first.group(1).toLowerCase(Locale.ROOT) : null;
         while (recentResponses.size() > 6) {
             recentResponses.removeFirst();
         }
@@ -1190,6 +1210,7 @@ public final class CommandSession {
         if (behind.matches()) {
             place = "behind " + behind.group(1);
         }
+        place = unglue(place);
         // Let the game try first ("go into the house" may be a real command); parser
         // errors don't use a turn, so on failure the reply is replaced by the walk.
         // Zork doesn't know "back" in "go back to the kitchen".
@@ -1250,6 +1271,30 @@ public final class CommandSession {
             return false;
         }
         return walkTo(target, result);
+    }
+
+    // Speech sometimes runs a room's name together ("livingroom"): split it back into the name.
+    private String unglue(String place) {
+        Set<String> names = new HashSet<>();
+        for (String name : map.keySet()) {
+            names.add(name.toLowerCase(Locale.ROOT));
+        }
+        HintAdvisor advisor = hints;
+        if (advisor != null) {
+            names.addAll(advisor.roomNames());
+        }
+        StringBuilder out = new StringBuilder();
+        for (String word : place.split(" ")) {
+            String replacement = word;
+            for (String name : names) {
+                if (name.contains(" ") && name.replace(" ", "").equals(word.toLowerCase(Locale.ROOT))) {
+                    replacement = name;
+                    break;
+                }
+            }
+            out.append(out.length() == 0 ? "" : " ").append(replacement);
+        }
+        return out.toString();
     }
 
     private boolean walkTo(String target, Result result) {
@@ -1393,6 +1438,11 @@ public final class CommandSession {
         }
         for (String alternative : heard) {
             String canonical = CommandNormalizer.canonicalize(alternative);
+            if (isRepeatedHint(canonical)) {
+                Result result = handle("hint");
+                result.heard = "hint";
+                return result;
+            }
             if (SITUATION_PHRASES.contains(canonical) || HELP_PHRASES.contains(canonical)
                     || HINT_PHRASES.contains(canonical) || UNDO_PHRASES.contains(canonical)
                     || isStop(canonical)) {
@@ -1414,8 +1464,44 @@ public final class CommandSession {
                 }
             }
         }
-        String chosen = SpeechMatcher.choose(heard, speechVocabulary());
+        SpeechMatcher.Vocabulary vocabulary = speechVocabulary();
+        String chosen = SpeechMatcher.choose(heard, vocabulary);
+        int rejectedBefore = rejectedInARow;
+        Snapshot top = undo.peek();
         Result result = handle(chosen);
+        // The recognizer's first guess was rejected without using a turn ("catch the rope to the
+        // railing"): try the next best guesses ("attach the rope...") before asking the player again.
+        if (result.rejected && onlyParserRejections(result)) {
+            List<String> savedPending = pending;
+            int tries = 0;
+            for (String other : SpeechMatcher.rank(heard, vocabulary)) {
+                if (tries >= 2) {
+                    break;
+                }
+                if (other.equals(chosen) || SpeechMatcher.unknownWords(other, vocabulary) > 0) {
+                    continue;
+                }
+                tries++;
+                while (!undo.isEmpty() && undo.peek() != top) {
+                    undo.pop();
+                }
+                rejectedInARow = rejectedBefore;
+                pending = null;
+                Result retry = handle(other);
+                if (!retry.rejected || !onlyParserRejections(retry)) {
+                    retry.heard = other;
+                    return retry;
+                }
+            }
+            if (tries > 0) {
+                while (!undo.isEmpty() && undo.peek() != top) {
+                    undo.pop();
+                }
+                takeSnapshot(chosen);
+                rejectedInARow = rejectedBefore + 1;
+                pending = savedPending;
+            }
+        }
         result.heard = chosen;
         if (result.rejected && !chosen.isEmpty()) {
             int at = result.exchanges.size();
@@ -1428,6 +1514,24 @@ public final class CommandSession {
             result.exchanges.add(at, new Exchange(null, null, "I heard: " + chosen + "."));
         }
         return result;
+    }
+
+    // "hint hint" or "hint hit": a repeated plea for a hint, with no other words.
+    private boolean isRepeatedHint(String canonical) {
+        String[] words = canonical.split(" ");
+        if (words.length < 2 || words.length > 3 || game.contains("hint")) {
+            return false;
+        }
+        boolean hint = false;
+        for (String word : words) {
+            if (word.equals("hint") || word.equals("hints")) {
+                hint = true;
+            } else if (!HINT_ALIKES.contains(word) && !word.equals("hit") && !word.equals("him")
+                    && !word.equals("in") && !word.equals("hen")) {
+                return false;
+            }
+        }
+        return hint;
     }
 
     /** Words worth telling the speech recognizer to expect: directions, verbs and things seen in the game. */
@@ -1472,17 +1576,17 @@ public final class CommandSession {
         return new SpeechMatcher.Vocabulary() {
             @Override
             public boolean knows(String word) {
-                return appWords().contains(word) || game.contains(word);
+                return appWords().contains(word) || isGameWord(word);
             }
 
             @Override
             public boolean isVisible(String word) {
-                return visible.contains(word) && game.contains(word);
+                return visible.contains(word) && isGameWord(word);
             }
 
             @Override
             public boolean isGameWord(String word) {
-                return game.contains(word);
+                return game.contains(word) && (seenGameWords.contains(word) || !isGluedWords(word));
             }
 
             @Override
@@ -1490,6 +1594,23 @@ public final class CommandSession {
                 return candidates;
             }
         };
+    }
+
+    // "livingroom": two words run together. Old games compare only the first six letters, so
+    // the game seems to know it ("living"), but it doesn't.
+    private boolean isGluedWords(String word) {
+        if (word.length() <= 6 || CommandNormalizer.DIRECTIONS.containsKey(word)) {
+            return false;
+        }
+        for (int i = 3; i <= word.length() - 3; i++) {
+            String first = word.substring(0, i);
+            String second = word.substring(i);
+            if ((game.contains(first) || appWords().contains(first)) && first.length() < 7
+                    && (game.contains(second) || appWords().contains(second))) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private static Set<String> appWords;
@@ -1910,6 +2031,23 @@ public final class CommandSession {
 
     private boolean isRejected(String response) {
         return CommandSuggester.isRejection(response);
+    }
+
+    // True if the player's words name the thing in the command ("in the bottle", "open the glass bottle").
+    private static boolean mentionsNoun(String canonical, String command) {
+        String[] words = command.split(" ");
+        String noun = words[words.length - 1];
+        return Arrays.asList(canonical.split(" ")).contains(noun);
+    }
+
+    // True if nothing reached the game but parser errors, which don't use a turn.
+    private boolean onlyParserRejections(Result result) {
+        for (Exchange exchange : result.exchanges) {
+            if (exchange.command != null && !isRejected(exchange.response)) {
+                return false;
+            }
+        }
+        return true;
     }
 
     private static boolean cantGo(String response) {

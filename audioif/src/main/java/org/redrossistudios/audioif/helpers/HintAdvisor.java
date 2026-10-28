@@ -55,19 +55,36 @@ public final class HintAdvisor {
     // Goals the player can no longer do the walkthrough's way (Zork's egg, once broken, is a different object).
     private final Set<Integer> skipped = new HashSet<>();
     private boolean justSkipped;
+    // "room\tkey" -> goals the walkthrough did in that room just before first taking that exit
+    // (Dome Room "d" needs "tie rope to railing" first).
+    private final Map<String, List<Integer>> exitNeeds = new HashMap<>();
     static final String SKIPPED = "That step seems to be done another way already, so here's the next one. ";
 
     public HintAdvisor(WalkthroughIndex index) {
         this.index = index;
-        for (WalkthroughIndex.Step step : index.steps) {
+        for (int k = 0; k < index.steps.size(); k++) {
+            WalkthroughIndex.Step step = index.steps.get(k);
             if (step.room != null && step.toRoom != null) {
                 String key = key(step.command);
-                walkthroughExits.computeIfAbsent(step.room, k -> new LinkedHashMap<>()).putIfAbsent(key, step.toRoom);
+                Map<String, String> exits = walkthroughExits.computeIfAbsent(step.room, x -> new LinkedHashMap<>());
+                if (!exits.containsKey(key)) {
+                    exits.put(key, step.toRoom);
+                    List<Integer> needs = new ArrayList<>();
+                    for (int j = k - 1; j >= 0 && step.room.equals(index.steps.get(j).room)
+                            && index.steps.get(j).toRoom == null; j--) {
+                        if (index.steps.get(j).isGoal()) {
+                            needs.add(0, j);
+                        }
+                    }
+                    if (!needs.isEmpty()) {
+                        exitNeeds.put(step.room + "\t" + key, needs);
+                    }
+                }
                 // Zork's map isn't symmetric (north of the house, "e" leads behind it, but "w"
                 // from there enters the kitchen), so only use ways back the replay tried.
                 String back = OPPOSITE.get(key);
                 if (back != null && step.returns) {
-                    reverseExits.computeIfAbsent(step.toRoom, k -> new LinkedHashMap<>()).putIfAbsent(back, step.room);
+                    reverseExits.computeIfAbsent(step.toRoom, x -> new LinkedHashMap<>()).putIfAbsent(back, step.room);
                 }
             }
         }
@@ -91,6 +108,11 @@ public final class HintAdvisor {
 
     private void countId(String id) {
         idsByName.computeIfAbsent(roomName(id).toLowerCase(Locale.ROOT), k -> new HashSet<>()).add(id);
+    }
+
+    /** Lower-case names of every room the walkthrough visits. */
+    public synchronized Set<String> roomNames() {
+        return new HashSet<>(idsByName.keySet());
     }
 
     private boolean unique(String name) {
@@ -144,7 +166,14 @@ public final class HintAdvisor {
             }
             any = true;
         }
-        return any ? route(roomId(room, state), goalRoom, walkthroughExits, reverseExits) : null;
+        return any ? routeAvoidingNeeds(roomId(room, state), goalRoom, state) : null;
+    }
+
+    // The walkthrough route, avoiding exits whose earlier steps aren't done when there's another way.
+    private List<String> routeAvoidingNeeds(String from, String to, int[] state) {
+        List<String> path = route(from, to, blocked(state), walkthroughExits, reverseExits);
+        return path != null ? path
+                : route(from, to, java.util.Collections.<String>emptySet(), walkthroughExits, reverseExits);
     }
 
     /**
@@ -174,7 +203,7 @@ public final class HintAdvisor {
                 if (id.equals(from) || !name.containsAll(wanted)) {
                     continue;
                 }
-                List<String> path = route(from, id, walkthroughExits, reverseExits);
+                List<String> path = routeAvoidingNeeds(from, id, state);
                 if (path != null && !path.isEmpty() && path.size() <= maxSteps
                         && (best == null || path.size() < best.size())) {
                     best = path;
@@ -241,10 +270,62 @@ public final class HintAdvisor {
             case 0:
                 return "Your next step is somewhere else, at " + place + "." + " Say hint again for directions.";
             case 1:
-                return directions(at, goal.room, knownExits) + " Say hint again to hear what to do there.";
+                return directions(at, goal.room, knownExits, state) + " Say hint again to hear what to do there.";
             default:
-                return "At " + place + ", try: " + goal.command + ". " + directions(at, goal.room, knownExits);
+                return "At " + place + ", try: " + goal.command + ". " + directions(at, goal.room, knownExits, state);
         }
+    }
+
+    // Walkthrough exits whose earlier steps in the same room the player hasn't done.
+    private Set<String> blocked(int[] state) {
+        Set<String> blocked = new HashSet<>();
+        if (state == null) {
+            return blocked;
+        }
+        for (Map.Entry<String, List<Integer>> entry : exitNeeds.entrySet()) {
+            if (firstNeed(entry.getValue(), state) >= 0) {
+                blocked.add(entry.getKey());
+            }
+        }
+        return blocked;
+    }
+
+    private int firstNeed(List<Integer> needs, int[] state) {
+        for (int need : needs) {
+            if (!skipped.contains(need) && !index.isDone(need, state)) {
+                return need;
+            }
+        }
+        return -1;
+    }
+
+    // "At Dome Room, first try: tie rope to railing." for the first exit on the path that needs it.
+    private String needOnPath(String from, List<String> path, int[] state) {
+        String current = from;
+        for (String step : path) {
+            List<Integer> goals = exitNeeds.get(current + "\t" + step);
+            int need = goals == null || state == null ? -1 : firstNeed(goals, state);
+            if (need >= 0) {
+                return "At " + roomName(current) + ", first try: " + index.steps.get(need).command + ".";
+            }
+            String next = null;
+            for (Map<String, Map<String, String>> map : Arrays.asList(walkthroughExits, reverseExits)) {
+                Map<String, String> exits = map.get(current);
+                if (next == null && exits != null) {
+                    for (Map.Entry<String, String> exit : exits.entrySet()) {
+                        if (key(exit.getKey()).equals(step)) {
+                            next = exit.getValue();
+                            break;
+                        }
+                    }
+                }
+            }
+            if (next == null) {
+                return null;
+            }
+            current = next;
+        }
+        return null;
     }
 
     /**
@@ -307,15 +388,20 @@ public final class HintAdvisor {
         return sb.append('.').toString();
     }
 
-    private String directions(String from, String to, Map<String, Map<String, String>> knownExits) {
+    private String directions(String from, String to, Map<String, Map<String, String>> knownExits, int[] state) {
         String fromName = roomName(from);
         String toName = roomName(to);
         // The player's map only knows names, so it's only trusted for names that are unique.
         if (knownExits != null && unique(fromName) && unique(toName)
-                && route(fromName, toName, knownExits) != null) {
+                && route(fromName, toName, java.util.Collections.<String>emptySet(), knownExits) != null) {
             return "You've been there: say go to " + toName + ".";
         }
-        List<String> path = route(from, to, walkthroughExits, reverseExits);
+        List<String> path = route(from, to, blocked(state), walkthroughExits, reverseExits);
+        String first = null;
+        if (path == null) {
+            path = route(from, to, java.util.Collections.<String>emptySet(), walkthroughExits, reverseExits);
+            first = path == null ? null : needOnPath(from, path, state);
+        }
         if (path == null) {
             return "I don't know the way from here. Try to retrace your steps.";
         }
@@ -331,12 +417,15 @@ public final class HintAdvisor {
         if (shown < path.size()) {
             sb.append(", and so on. Ask again on the way");
         }
-        return sb.append('.').toString();
+        sb.append('.');
+        return first == null ? sb.toString() : sb.append(' ').append(first).toString();
     }
 
-    // Breadth-first over the player's map and, if given, the walkthrough's moves and their reverses.
+    // Breadth-first over the player's map and, if given, the walkthrough's moves and their reverses,
+    // without the exits in {@code blocked} ("room\tkey").
     @SafeVarargs
-    private static List<String> route(String from, String to, Map<String, Map<String, String>>... maps) {
+    private static List<String> route(String from, String to, Set<String> blocked,
+                                      Map<String, Map<String, String>>... maps) {
         if (from == null) {
             return null;
         }
@@ -359,6 +448,9 @@ public final class HintAdvisor {
                 }
             }
             for (Map.Entry<String, String> exit : exits.entrySet()) {
+                if (blocked.contains(current + "\t" + exit.getKey())) {
+                    continue;
+                }
                 if (!paths.containsKey(exit.getValue())) {
                     List<String> path = new ArrayList<>(paths.get(current));
                     path.add(exit.getKey());

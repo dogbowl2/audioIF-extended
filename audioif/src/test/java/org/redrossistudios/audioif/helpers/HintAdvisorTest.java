@@ -110,6 +110,31 @@ public class HintAdvisorTest {
     }
 
     @Test
+    public void routesAvoidExitsThatNeedAnEarlierStep() {
+        // Forest -u-> Tree (get egg), Forest -n-> Lane -n-> Hall -e-> Dome (tie rope) -d-> Torch
+        // -e-> Temple -pray-> Forest. Fields: 0 = rope tied, 1 = egg held.
+        WalkthroughIndex index = new WalkthroughIndex(Arrays.asList(
+                new WalkthroughIndex.Step("u", "Forest", "Tree", true, new int[0], new int[0]),
+                new WalkthroughIndex.Step("get egg", "Tree", null, new int[] {1}, new int[] {1}),
+                new WalkthroughIndex.Step("d", "Tree", "Forest", false, new int[0], new int[0]),
+                new WalkthroughIndex.Step("n", "Forest", "Lane", true, new int[0], new int[0]),
+                new WalkthroughIndex.Step("n", "Lane", "Hall", true, new int[0], new int[0]),
+                new WalkthroughIndex.Step("e", "Hall", "Dome", true, new int[0], new int[0]),
+                new WalkthroughIndex.Step("tie rope to railing", "Dome", null, new int[] {0}, new int[] {1}),
+                new WalkthroughIndex.Step("d", "Dome", "Torch", false, new int[0], new int[0]),
+                new WalkthroughIndex.Step("e", "Torch", "Temple", false, new int[0], new int[0]),
+                new WalkthroughIndex.Step("pray", "Temple", "Forest", false, new int[0], new int[0])));
+        HintAdvisor advisor = new HintAdvisor(index);
+        advisor.hint(new int[] {0, 0}, "Dome", null);
+        assertEquals("From here, go west, south, south, then up. Say hint again to hear what to do there.",
+                advisor.hint(new int[] {0, 0}, "Dome", null));
+        HintAdvisor tied = new HintAdvisor(index);
+        tied.hint(new int[] {1, 0}, "Dome", null);
+        assertEquals("From here, go down, east, pray, then up. Say hint again to hear what to do there.",
+                tied.hint(new int[] {1, 0}, "Dome", null));
+    }
+
+    @Test
     public void onlyCheckedWaysBackAreUsed() {
         WalkthroughIndex index = new WalkthroughIndex(Arrays.asList(
                 new WalkthroughIndex.Step("n", "Field", "Path", true, new int[0], new int[0]),

@@ -51,13 +51,17 @@ An Android app for playing interactive fiction (Z-machine games such as Zork) by
 - Zork's map isn't symmetric. Routes use only exits that the replay actually tried. Guessed reverse exits (`CommandSession.guessedExits`) are left out of the hint routes, and `CommandSession.route` uses them only when no route of confirmed exits exists.
 - Zork's Loud Room echoes "word word ..." for every non-movement command, which players hear as a stuck loop. `CommandSession.runCommand` adds `ECHO_NOTE` (say "echo" or leave).
 - Hint skips are saved next to the auto-save (`AutoSave.saveHintSkips`, `CommandSession.hintSkips`/`restoreHintSkips`); the session holds them until the `HintAdvisor` finishes loading.
-- `SpeechMatcher.choose` ranks alternatives by fewest unknown words, then most words for visible things, then fewest app-only words (such as "road", a landmark word Zork doesn't know), then fewest changes.
+- `SpeechMatcher.rank` orders alternatives by fewest unknown words, then most words for visible things, then fewest changes, then fewest app-only words (such as "road", a landmark word Zork doesn't know). `choose` returns the first. When the game rejects the chosen one as not understood, `CommandSession.handleSpeech` retries up to 2 more with no unknown words (parser errors don't use a turn).
+- Zork's dictionary compares only 6 letters, so `game.contains("livingroom")` is true. `CommandSession.isGluedWords` treats such run-together words as unknown unless the game printed them; `unglue` maps them back to room names for "go to".
+- `WalkthroughIndex.fromRun` drops global fields that only rise (the score), so goals don't depend on the player's score.
+- `HintAdvisor.exitNeeds` records walkthrough steps done in a room before its exit was first used (tie rope before Dome Room "d"); routes avoid those exits until the step's goal is met, or add "first try: …".
+- "You'll have to X first" is remembered (`CommandSession.neededFirst`); a following rejected command naming the same thing runs X.
 - ZMPP's random generator isn't saved in snapshots, so exploring or retrying changes later random events. The replay retries failed steps from earlier snapshots.
 - "help" describes the current situation (`CommandSession.situation`: room, visible things, exits, things to try); "hint" gives walkthrough hints; "how do I play" reads the guide. Fetch walkthroughs before building an APK for the phone, or hints are missing.
 - Some walkthrough goals become impossible (Zork I's broken egg is a different object). `HintAdvisor.skipHintedIfStuck` skips a goal when the hinted command gets an "already…" reply but the state doesn't match.
 - The app's own words (help, hint, undo) must not be `SpeechMatcher` candidates, or game verbs such as "hang" get corrected to them.
 - Zork's "swing the sword" only says "Whoosh!"; `CommandSession` turns it into an attack only while the object tree (`thingsHere`) holds a creature, so a dead troll isn't attacked again.
-- Speech: on ERROR_CLIENT, busy or disconnected errors the recognizer is recreated. Listening pauses after 3 misses in a row, or while the app is in the background.
+- Speech: on ERROR_CLIENT, busy or disconnected errors the recognizer is recreated. Errors before the player starts speaking restart listening quietly (no "sorry"); after 60 s of those, listening pauses. Otherwise listening pauses after 3 misses in a row, or while the app is in the background.
 
 ## Current state and open ideas (October 2026)
 - Version 2.0 is merged to `main`. The build with the version label hasn't been installed on the phone yet.

@@ -298,6 +298,9 @@ public final class CommandNormalizer {
         putExact("climb down", "D");
         putExact("climb upward", "U");
         putExact("climb downward", "D");
+        putExact("crawl up", "U");
+        putExact("crawl down", "D");
+        put("crawl", "climb");
         putExact("what is in", "look");
         putExact("what is inside", "look");
         putExact("what is on", "look");

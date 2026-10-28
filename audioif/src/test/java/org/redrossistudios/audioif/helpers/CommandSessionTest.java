@@ -619,4 +619,86 @@ public class CommandSessionTest {
         session.handleSpeech(Arrays.asList("take the road", "take the rope"));
         assertEquals("take the rope", game.sent.get(0));
     }
+
+    @Test
+    public void speechTriesTheNextGuessWhenTheFirstIsRejected() {
+        game.words.addAll(Arrays.asList("rope", "railing", "attach", "catch", "to"));
+        game.replies.put("attach the rope to the railing", "The rope drops over the side.");
+        game.replies.put("catch the rope to the railing", "That sentence isn't one I recognize.");
+        CommandSession.Result result = session.handleSpeech(Arrays.asList(
+                "catch the rope to the railing", "attach the rope to the railing"));
+        assertFalse(result.text(), result.rejected);
+        assertEquals("attach the rope to the railing", result.heard);
+        assertEquals("attach the rope to the railing", game.sent.get(game.sent.size() - 1));
+        assertTrue(result.text(), result.text().contains("The rope drops"));
+        assertFalse(result.text(), result.text().contains("recognize"));
+    }
+
+    @Test
+    public void repeatedHintIsAHint() {
+        CommandSession.Result result = session.handleSpeech(Arrays.asList("hint hint", "hint hit"));
+        assertEquals("hint", result.heard);
+        assertTrue(game.sent.isEmpty());
+    }
+
+    @Test
+    public void crawlDownIsADirection() {
+        game.exit("Field", "D", "Cellar");
+        game.words.add("kill");
+        session.handleSpeech(Arrays.asList("crawl down", "call down"));
+        assertEquals("Cellar", game.room);
+    }
+
+    @Test
+    public void wordsRunTogetherAreNotGameWords() {
+        // Zork compares only the first six letters, so it seems to know "livingroom".
+        game.words.addAll(Arrays.asList("go", "to", "living", "livingroom", "room"));
+        session.handleSpeech(Arrays.asList("go to the living room", "go to the livingroom"));
+        assertFalse(game.sent.toString(), game.sent.contains("go to the livingroom"));
+    }
+
+    @Test
+    public void roomNameRunTogetherIsStillFound() {
+        game.exit("Field", "D", "Living Room");
+        game.exit("Living Room", "U", "Field");
+        game.words.addAll(Arrays.asList("go", "to"));
+        session.handle("go down");
+        session.handle("go up");
+        session.handle("go to the livingroom");
+        assertEquals("Living Room", game.room);
+    }
+
+    @Test
+    public void notAtAPlaceWalksThere() {
+        game.words.addAll(Arrays.asList("go", "to", "hut"));
+        game.replies.put("go to the hut", "You're not at the hut.");
+        session.handle("go north");
+        session.handle("go east");
+        session.handle("go west");
+        session.handle("go south");
+        session.handle("go to the hut");
+        assertEquals("Hut", game.room);
+    }
+
+    @Test
+    public void loudRoomNamesTheExits() {
+        game.replies.put("take the lamp", "lamp lamp ...");
+        game.replies.put("look", "Path\nA path runs east and west. A ladder leads up.");
+        session.handle("go north");
+        session.handle("look");
+        CommandSession.Result result = session.handle("take the lamp");
+        assertTrue(result.text(), result.text().contains("like go east, west or up."));
+    }
+
+    @Test
+    public void garbledReplyToAMustDoFirstDoesIt() {
+        game.words.addAll(Arrays.asList("bottle", "glass", "drink", "water"));
+        game.replies.put("drink the water", "You'll have to open the glass bottle first.");
+        game.replies.put("in the bottle", "You used the word \"the\" in a way that I don't understand.");
+        game.replies.put("open the glass bottle", "Opened.");
+        session.handle("drink the water");
+        CommandSession.Result result = session.handle("in the bottle");
+        assertEquals("open the glass bottle", game.sent.get(game.sent.size() - 1));
+        assertTrue(result.text(), result.text().contains("Opened."));
+    }
 }

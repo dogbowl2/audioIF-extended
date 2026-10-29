@@ -21,6 +21,13 @@ public class CommandNormalizerTest {
     };
 
     @Test
+    public void mapsStealingAndKeepDoing() {
+        assertEquals("take the painting", CommandNormalizer.normalize("steal the painting", ALL_WORDS));
+        assertEquals(CommandNormalizer.normalize("walk around the house", ALL_WORDS),
+                CommandNormalizer.normalize("keep walking around the house", ALL_WORDS));
+    }
+
+    @Test
     public void mapsPrayingAtThings() {
         assertEquals("pray", CommandNormalizer.normalize("pray at the altar", ALL_WORDS));
         assertEquals("pray", CommandNormalizer.normalize("say a prayer", ALL_WORDS));

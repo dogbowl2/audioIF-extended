@@ -58,6 +58,10 @@ public final class HintAdvisor {
     // "room\tkey" -> goals the walkthrough did in that room just before first taking that exit
     // (Dome Room "d" needs "tie rope to railing" first).
     private final Map<String, List<Integer>> exitNeeds = new HashMap<>();
+    // "room\tkey" exits the player tried and didn't get through (Zork's trap door, barred from above).
+    private final Set<String> playerBlocked = new HashSet<>();
+    // Routes longer than this are offered as "say go to X" instead of read out in full.
+    static final int SPOKEN_ROUTE = 3;
     static final String SKIPPED = "That step seems to be done another way already, so here's the next one. ";
 
     public HintAdvisor(WalkthroughIndex index) {
@@ -306,17 +310,37 @@ public final class HintAdvisor {
         String place = roomName(goalRoom);
         switch (shown) {
             case 0:
-                return "Your next step is somewhere else, at " + place + "." + " Say hint again for directions.";
+                return "Your next step is somewhere else, at " + place + ". Say go to " + place
+                        + ", and I'll walk you there, or say hint again for directions.";
             case 1:
-                return directions(at, goalRoom, knownExits, state) + " Say hint again to hear what to do there.";
+                return directions(at, goalRoom, knownExits, state) + " At " + place + ", "
+                        + lowerFirst(thingsHint(goal.command)) + " Say hint again to hear exactly what to do.";
             default:
                 return "At " + place + ", try: " + goal.command + ". " + directions(at, goalRoom, knownExits, state);
         }
     }
 
-    // Walkthrough exits whose earlier steps in the same room the player hasn't done.
+    /**
+     * Records a move the player tried that left them where they were ({@code passed} false), or
+     * one that worked ({@code passed} true), so routes avoid ways that are shut right now.
+     * {@code roomId} is from {@link #roomId}; {@code direction} is a key like "U".
+     */
+    public synchronized void noteMove(String roomId, String direction, boolean passed) {
+        if (roomId == null || direction == null) {
+            return;
+        }
+        String edge = roomId + "\t" + key(direction);
+        if (passed) {
+            playerBlocked.remove(edge);
+        } else {
+            playerBlocked.add(edge);
+        }
+    }
+
+    // Walkthrough exits whose earlier steps in the same room the player hasn't done, and
+    // exits the player found shut.
     private Set<String> blocked(int[] state) {
-        Set<String> blocked = new HashSet<>();
+        Set<String> blocked = new HashSet<>(playerBlocked);
         if (state == null) {
             return blocked;
         }
@@ -371,7 +395,16 @@ public final class HintAdvisor {
      * for a room id from {@link #roomId}. Empty if the replay never mapped the room.
      */
     public synchronized List<String> exitsFrom(String roomId) {
+        return exitsFrom(roomId, null);
+    }
+
+    /**
+     * Like {@link #exitsFrom(String)}, but without exits that need an earlier step the player
+     * hasn't done ({@code state}), so "help" doesn't give away the trap door under the rug.
+     */
+    public synchronized List<String> exitsFrom(String roomId, int[] state) {
         List<String> found = new ArrayList<>();
+        Set<String> blocked = state == null ? playerBlocked : blocked(state);
         for (Map<String, Map<String, String>> map : Arrays.asList(reverseExits, walkthroughExits)) {
             Map<String, String> exits = roomId == null ? null : map.get(roomId);
             if (exits == null) {
@@ -380,6 +413,9 @@ public final class HintAdvisor {
             for (String key : exits.keySet()) {
                 String word = DIRECTION_WORDS.get(key);
                 String abbreviation = word == null ? null : key(word);
+                if (abbreviation != null && blocked.contains(roomId + "\t" + abbreviation)) {
+                    continue;
+                }
                 if (abbreviation != null && !found.contains(abbreviation)) {
                     found.add(abbreviation);
                 }
@@ -426,6 +462,10 @@ public final class HintAdvisor {
         return sb.append('.').toString();
     }
 
+    private static String lowerFirst(String text) {
+        return text.isEmpty() ? text : Character.toLowerCase(text.charAt(0)) + text.substring(1);
+    }
+
     private String directions(String from, String to, Map<String, Map<String, String>> knownExits, int[] state) {
         String fromName = roomName(from);
         String toName = roomName(to);
@@ -442,6 +482,20 @@ public final class HintAdvisor {
         }
         if (path == null) {
             return "I don't know the way from here. Try to retrace your steps.";
+        }
+        // A long list of compass words is hard to remember while listening, so offer the walk.
+        if (path.size() > SPOKEN_ROUTE) {
+            StringBuilder sb = new StringBuilder(toName).append(" is ").append(path.size())
+                    .append(" moves away. Say go to ").append(toName).append(", and I'll walk you there. Or start with: ");
+            for (int i = 0; i < SPOKEN_ROUTE; i++) {
+                if (i > 0) {
+                    sb.append(i == SPOKEN_ROUTE - 1 ? ", then " : ", ");
+                }
+                String word = DIRECTION_WORDS.get(path.get(i));
+                sb.append(word != null ? (i == 0 ? "go " + word : word) : path.get(i).toLowerCase(Locale.ROOT));
+            }
+            sb.append('.');
+            return first == null ? sb.toString() : sb.append(' ').append(first).toString();
         }
         StringBuilder sb = new StringBuilder("From here, ");
         int shown = Math.min(path.size(), MAX_ROUTE);

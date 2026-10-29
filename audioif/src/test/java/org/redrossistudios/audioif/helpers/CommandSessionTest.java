@@ -275,9 +275,9 @@ public class CommandSessionTest {
         session.setHintAdvisor(new HintAdvisor(new WalkthroughIndex(java.util.Arrays.asList(
                 new WalkthroughIndex.Step("n", "Field", "Path", new int[0], new int[0]),
                 new WalkthroughIndex.Step("open box", "Path", null, new int[] {0}, new int[] {1})))));
-        assertEquals("Your next step is somewhere else, at Path. Say hint again for directions.",
+        assertEquals("Your next step is somewhere else, at Path. Say go to Path, and I'll walk you there, or say hint again for directions.",
                 session.handle("help me").text());
-        assertEquals("From here, go north. Say hint again to hear what to do there.",
+        assertEquals("From here, go north. At Path, try doing something with the box. Say hint again to hear exactly what to do.",
                 session.handle("hint").text());
         session.handle("n");
         assertEquals("Try: open box.", session.handle("I'm stuck").text());
@@ -402,11 +402,42 @@ public class CommandSessionTest {
     @Test
     public void useXOnYOffersRealVerbs() {
         CommandSession.Result result = session.handle("use the key on the door");
-        assertEquals(Arrays.asList("unlock the door with the key", "open the door with the key",
-                "put the key in the door"),
-                result.suggestions);
-        session.handle("one");
         assertEquals("unlock the door with the key", game.sent.get(game.sent.size() - 1));
+        assertTrue(result.text().contains("I took that as: unlock the door with the key"));
+        result = session.handle("use the rope on the door");
+        assertTrue(result.suggestions != null && !result.suggestions.isEmpty());
+    }
+
+    @Test
+    public void exitQuestionsAreAnsweredNotSent() {
+        session.handle("north");
+        session.handle("south");
+        int sent = game.sent.size();
+        CommandSession.Result result = session.handle("which ways can i go from here");
+        assertTrue(result.text(), result.text().toLowerCase().contains("north"));
+        for (String command : game.sent.subList(sent, game.sent.size())) {
+            assertTrue(command, !command.equals("go"));
+        }
+    }
+
+    @Test
+    public void dropsAModifierTheParserCantUse() {
+        CommandSession.Result result = session.handle("read the leaflet on the box");
+        assertEquals("read the leaflet", game.sent.get(game.sent.size() - 1));
+        assertTrue(result.text(), result.text().contains("WELCOME!"));
+        assertTrue(result.text(), result.text().contains("I took that as: read the leaflet"));
+    }
+
+    @Test
+    public void walkingStopsAtABlockedWayAndPlansAgain() {
+        session.handle("north");
+        session.handle("east");
+        session.handle("west");
+        session.handle("south");
+        game.exits.get("Path").remove("E");
+        CommandSession.Result result = session.handle("go to the hut");
+        assertEquals("Path", game.room);
+        assertTrue(result.text(), result.text().contains("I don't know a way to Hut"));
     }
 
     @Test
@@ -472,7 +503,7 @@ public class CommandSessionTest {
         session.handle("go north");
         CommandSession.Result result = session.handle("which way can I go?");
         assertEquals("look", game.sent.get(game.sent.size() - 1));
-        assertTrue(result.text(), result.text().contains("south to Field"));
+        assertTrue(result.text(), result.text().contains("south, maybe back to Field"));
     }
 
     @Test
@@ -683,10 +714,10 @@ public class CommandSessionTest {
     public void answersWhichWayAndDirectionlessMoves() {
         session.handle("north");
         session.handle("south");
-        assertTrue(session.handle("which way should i go").text().contains("Ways you have used from here: north to Path."));
+        assertTrue(session.handle("which way should i go").text().contains("You can go north to Path."));
         game.words.add("go");
         game.replies.put("go", "You must specify a direction to go.");
-        assertTrue(session.handle("go").text().contains("Say a direction, like north or go up. Ways you have used"));
+        assertTrue(session.handle("go").text().contains("Say a direction, like north or go up. You can go north to Path"));
         CommandSession fresh = new CommandSession(game);
         fresh.start("Field\nYou are in a field.");
         int sent = game.sent.size();

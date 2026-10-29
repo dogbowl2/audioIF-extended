@@ -307,6 +307,7 @@ public final class CommandNormalizer {
         putExact("crawl up", "U");
         putExact("crawl down", "D");
         put("crawl", "climb");
+        put("steal", "take");
         // Zork only knows a bare "pray"; "pray at the altar" gets "I don't know the word".
         for (String pray : new String[]{"pray at the altar", "pray at altar", "pray to the altar", "pray in the temple",
                 "pray to god", "pray to the gods", "pray here", "say a prayer", "say prayer", "kneel and pray",
@@ -476,6 +477,11 @@ public final class CommandNormalizer {
 
     // "going southwest" -> "go southwest" (after "try" is stripped from "try going southwest").
     private static String stemGerund(String text) {
+        // "keep walking around the house" -> "walking around the house"; "keep going" stays.
+        String kept = text.replaceFirst("^keep (?:on )?", "");
+        if (!kept.equals(text) && kept.contains(" ") && GERUNDS.containsKey(kept.substring(0, kept.indexOf(' ')))) {
+            text = kept;
+        }
         int space = text.indexOf(' ');
         String first = space < 0 ? text : text.substring(0, space);
         String stem = GERUNDS.get(first);

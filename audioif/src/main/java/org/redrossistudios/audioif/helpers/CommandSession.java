@@ -220,6 +220,26 @@ public final class CommandSession {
             "which way should i go now", "where should i go", "where should i go now", "which way do i go",
             "where do i go", "where do i go now", "which direction", "which direction should i go",
             "which direction do i go", "where now", "where next", "which way next");
+    // "which ways can I go", "what directions could we take now".
+    private static final Pattern EXIT_QUESTION = Pattern.compile("^(?:(?:which|what) (?:ways?|directions?|exits?|"
+            + "paths?|routes?) (?:can|could|should|do|may|might) (?:i|we) (?:go|take|head|use|try)|"
+            + "where (?:can|could|should|do|may) (?:i|we) (?:go|head))(?: now| next| from here| from| here)?$");
+    // "defend myself with the sword" or "fight back" while a troll attacks.
+    private static final Pattern DEFEND = Pattern.compile("^(?:(?:defend|protect) (?:myself|me|yourself|ourselves|us)"
+            + "(?: (?:with|using) (?:the )?.+)?|fight back|fight (?:him|her|it|them)|fight)$");
+    // "why is my sword glowing", "who is that guy", "what is this thing": the game can't answer,
+    // but examining the thing usually does.
+    private static final Pattern WHY_THING = Pattern.compile(
+            "^(?:why|how come) (?:is|are|does|did|do|was|has) (?:the )?([a-z]+)(?: .*)?$");
+    private static final Pattern WHO_THING = Pattern.compile("^(?:who|what) (?:is|are|was) (?:the )?"
+            + "(guy|man|woman|person|fellow|creature|monster|thing|someone|somebody|he|she|they|that)(?: here)?$");
+    private static final Pattern WHAT_THING = Pattern.compile("^what (?:is|are) (?:the )?([a-z]+)$");
+    // "read the lettering on the door", "examine the wall with engravings", "take the bottle of water".
+    private static final Pattern MODIFIED_THING = Pattern.compile("^(read|examine|x|look at|take|get|pick up|open|"
+            + "search|move|push|pull|turn|climb|close|light) (?:the )?([a-z]+(?: [a-z]+)?) (with|of|on|upon|in) "
+            + "(?:the )?([a-z]+(?: [a-z]+)?)$");
+    private static final Set<String> WEAPONS = set("sword", "knife", "axe", "dagger", "stiletto", "blade");
+    private static final Set<String> PUSH_THINGS = set("button", "buttons", "switch", "lever");
     private static final Set<String> CHATTER_STARTERS = set("i", "it", "that", "this", "because", "since",
             "cause", "which", "maybe", "hopefully", "probably", "you");
     // Zork's Loud Room answers every command with "bar bar ...".
@@ -485,6 +505,10 @@ public final class CommandSession {
         return REPEAT_PHRASES.contains(canonical) && !game.contains("repeat");
     }
 
+    private static boolean isExitQuestion(String canonical) {
+        return EXIT_QUESTIONS.contains(canonical) || EXIT_QUESTION.matcher(canonical).matches();
+    }
+
     private static boolean isDescriptionRequest(String canonical) {
         return REPEAT_DESCRIPTION.matcher(canonical).matches();
     }
@@ -535,7 +559,7 @@ public final class CommandSession {
             return result;
         }
 
-        if (EXIT_QUESTIONS.contains(canonical)) {
+        if (isExitQuestion(canonical)) {
             describeExits(result);
             return result;
         }
@@ -668,21 +692,24 @@ public final class CommandSession {
                 : "The game describes the exits in the room description. Try a direction, like north or go up.");
     }
 
-    // "Ways you have used from here: north to Kitchen.", or null if none are known.
+    // "You can go north to Kitchen or west.", or null if no exits are known. Guessed ways back
+    // aren't named, since Zork's map isn't symmetric (the cellar's barred trap door).
     private String knownExits() {
         Map<String, String> exits = room == null ? null : map.get(room);
-        if (exits == null || exits.isEmpty()) {
-            List<String> words = new ArrayList<>();
-            for (String exit : exitsHere()) {
-                words.add(spokenDirection(exit));
-            }
-            return words.isEmpty() ? null : "You can go " + spokenList(words, "or") + ".";
+        Set<String> keys = new LinkedHashSet<>();
+        if (exits != null) {
+            keys.addAll(exits.keySet());
         }
-        List<String> known = new ArrayList<>();
-        for (Map.Entry<String, String> exit : exits.entrySet()) {
-            known.add(spokenDirection(exit.getKey()) + " to " + exit.getValue());
+        keys.addAll(exitsHere());
+        List<String> words = new ArrayList<>();
+        for (String key : keys) {
+            boolean known = exits != null && exits.containsKey(key);
+            boolean guessed = guessedExits.contains(room + "\t" + key);
+            String way = DIRECTION_ORDER.contains(key) || key.equals("IN") || key.equals("OUT")
+                    ? spokenDirection(key) : key;
+            words.add(!known ? way : way + (guessed ? ", maybe back to " : " to ") + exits.get(key));
         }
-        return "Ways you have used from here: " + String.join(", ", known) + ".";
+        return words.isEmpty() ? null : "You can go " + spokenList(words, "or") + ".";
     }
 
     private static String spokenDirection(String key) {
@@ -762,6 +789,29 @@ public final class CommandSession {
                 return runCommand(attack, result);
             }
         }
+        if (DEFEND.matcher(canonical).matches()) {
+            String target = creatureHere();
+            String weapon = carriedWeapon();
+            if (target != null && weapon != null && game.contains("attack")) {
+                String attack = "attack the " + target + " with the " + weapon;
+                result.note("To fight, say " + attack + ".");
+                return runCommand(attack, result);
+            }
+        }
+        String about = thingAskedAbout(canonical);
+        if (about != null) {
+            String look = "examine the " + about;
+            result.note("(The game can't answer questions, so I'll " + look + ".)");
+            return runCommand(look, result);
+        }
+        Matcher useOn = USE_ON.matcher(canonical);
+        if (useOn.matches() && !game.contains("use")) {
+            String instead = useCommand(useOn.group(1), useOn.group(2));
+            if (instead != null) {
+                result.note("(I took that as: " + instead + ".)");
+                return runCommand(instead, result);
+            }
+        }
         Matcher goTo = GO_TO.matcher(canonical);
         if (goTo.matches() && CommandNormalizer.direction(goTo.group(1)) == null) {
             if (HOUSE_WORDS.contains(goTo.group(1)) && canonical.matches(".* (?:into|inside) .*")
@@ -806,6 +856,61 @@ public final class CommandSession {
             return true;
         }
         return ok;
+    }
+
+    // The weapon the player carries ("sword"), or null.
+    private String carriedWeapon() {
+        for (String thing : game.carried()) {
+            for (String word : thing.toLowerCase(Locale.ROOT).split("[^a-z]+")) {
+                if (WEAPONS.contains(word)) {
+                    return word;
+                }
+            }
+        }
+        return null;
+    }
+
+    // "why is my sword glowing" -> "sword"; "who is that guy" -> "troll"; else null.
+    private String thingAskedAbout(String canonical) {
+        Matcher who = WHO_THING.matcher(canonical);
+        if (who.matches()) {
+            return creatureHere();
+        }
+        Matcher why = WHY_THING.matcher(canonical);
+        Matcher what = WHAT_THING.matcher(canonical);
+        String noun = why.matches() ? why.group(1) : what.matches() ? what.group(1) : null;
+        if (noun == null || NOUN_STOPS.contains(noun) || !game.contains(noun)) {
+            return null;
+        }
+        for (String thing : visibleThings()) {
+            if (Arrays.asList(thing.split(" ")).contains(noun)) {
+                return noun;
+            }
+        }
+        for (String thing : game.carried()) {
+            if (Arrays.asList(thing.toLowerCase(Locale.ROOT).split("[^a-z]+")).contains(noun)) {
+                return noun;
+            }
+        }
+        return null;
+    }
+
+    // "use the wrench on the bolt" -> "turn the bolt with the wrench" when the tool says what to do.
+    private String useCommand(String tool, String target) {
+        String verb = null;
+        String last = target.substring(target.lastIndexOf(' ') + 1);
+        if (tool.matches(".*\\b(wrench|spanner|screwdriver)\\b.*")) {
+            verb = "turn";
+        } else if (tool.matches(".*\\b(key|keys)\\b.*")) {
+            verb = "unlock";
+        } else if (tool.matches(".*\\b(sword|knife|axe|dagger|stiletto|blade)\\b.*") && CREATURES.contains(last)) {
+            verb = "attack";
+        } else if (tool.matches(".*\\bpump\\b.*")) {
+            verb = "inflate";
+        } else if (tool.matches(".*\\b(match|matches|torch|candle|candles)\\b.*")) {
+            verb = "light";
+        }
+        return verb == null || !game.contains(verb) ? null : verb + " the " + target + " with the " + tool;
     }
 
     private String exitCommand() {
@@ -1008,6 +1113,9 @@ public final class CommandSession {
         if (retryWithSingular(command, response, result)) {
             return true;
         }
+        if (retryWithoutModifier(command, response, result)) {
+            return true;
+        }
         if (retryWithNoun(command, response, result)) {
             return true;
         }
@@ -1035,6 +1143,10 @@ public final class CommandSession {
 
     private String send(String command, Result result) {
         String before = room;
+        String moving = moveKey(command.toLowerCase(Locale.ROOT).trim());
+        HintAdvisor tracker = hints;
+        String fromId = moving != null && tracker != null && before != null
+                ? HintAdvisor.roomId(before, game.stateVector()) : null;
         String response = game.send(command);
         result.exchanges.add(new Exchange(command, response, null));
         learnVocabulary(response);
@@ -1067,6 +1179,10 @@ public final class CommandSession {
         if (direction != null && before != null && before.equals(room) && map.containsKey(before)) {
             map.get(before).remove(direction);
             guessedExits.remove(before + "\t" + direction);
+        }
+        if (fromId != null && room != null && (cantGo(response) || !isRejected(response))) {
+            // Hint routes then avoid a way the player found barred (the trap door above the cellar).
+            tracker.noteMove(fromId, moving, !room.equals(before));
         }
         recentResponses.addLast(response == null ? "" : response);
         Matcher first = response == null ? null : MUST_FIRST.matcher(response.replace('\u2019', '\''));
@@ -1132,6 +1248,42 @@ public final class CommandSession {
         return true;
     }
 
+    /**
+     * "read the lettering on the door" or "examine the wall with engravings" confuses Zork's parser,
+     * and "take the bottle of water" reaches for the water. Retry with one of the two things.
+     */
+    private boolean retryWithoutModifier(String command, String response, Result result) {
+        String lower = response.toLowerCase(Locale.ROOT).replace('\u2019', '\'');
+        boolean failed = isRejected(response) || lower.contains("can't reach something")
+                || lower.contains("you can't see any");
+        Matcher modified = MODIFIED_THING.matcher(command.toLowerCase(Locale.ROOT).trim());
+        if (!failed || !modified.matches()) {
+            return false;
+        }
+        String verb = modified.group(1);
+        String first = modified.group(2);
+        String second = modified.group(4);
+        // "the wall with engravings" is named by its engravings; "the bottle of water" is a bottle.
+        List<String> tries = modified.group(3).equals("with") ? Arrays.asList(second, first)
+                : Arrays.asList(first, second);
+        int mark = result.exchanges.size();
+        for (String thing : tries) {
+            String retried = verb + " the " + thing;
+            String retryResponse = send(retried, result);
+            String lowerRetry = retryResponse.toLowerCase(Locale.ROOT).replace('\u2019', '\'');
+            if (isRejected(retryResponse) || lowerRetry.contains("you can't see any")
+                    || lowerRetry.contains("can't reach something")) {
+                result.exchanges.remove(result.exchanges.size() - 1);
+                continue;
+            }
+            // Hide the parser error; it didn't use a turn.
+            result.exchanges.remove(mark - 1);
+            result.note("(I took that as: " + retried + ".)");
+            return true;
+        }
+        return false;
+    }
+
     private String singularKnown(String plural) {
         List<String> candidates = new ArrayList<>();
         if (plural.endsWith("ies") && plural.length() > 4) {
@@ -1160,10 +1312,19 @@ public final class CommandSession {
             return false;
         }
         String[] words = command.toLowerCase(Locale.ROOT).split(" ");
+        boolean person = false;
+        for (String word : words) {
+            person |= word.equals("him") || word.equals("her");
+        }
+        // "hit him again" means a creature, never a word from the last reply ("the troll breathes").
+        String noun = person ? creatureHere() : lastNoun;
+        if (noun == null) {
+            return false;
+        }
         boolean replaced = false;
         for (int i = 0; i < words.length; i++) {
             if (PRONOUNS.contains(words[i])) {
-                words[i] = "the " + lastNoun;
+                words[i] = "the " + noun;
                 replaced = true;
             }
         }
@@ -1178,7 +1339,7 @@ public final class CommandSession {
         }
         // Hide the parser error; it didn't use a turn.
         result.exchanges.remove(result.exchanges.size() - 2);
-        result.note("(I took it to mean the " + lastNoun + ".)");
+        result.note("(I took it to mean the " + noun + ".)");
         return true;
     }
 
@@ -1369,8 +1530,19 @@ public final class CommandSession {
         String command = CommandNormalizer.normalize(
                 clause.replaceFirst("(?i)\\bback (to|into|toward|towards)\\b", "$1"), game);
         String before = room;
-        String response = send(command, result);
         String target = findRoom(place);
+        if (target == null && moveKey(command.toLowerCase(Locale.ROOT).trim()) != null) {
+            // "the kitchen east": the place without its trailing direction.
+            String bare = place.replaceFirst("\\s+\\S+$", "");
+            if (!bare.equals(place) && CommandNormalizer.direction(place.substring(bare.length()).trim()) != null) {
+                target = findRoom(bare);
+            }
+        }
+        if (target != null && moveKey(command.toLowerCase(Locale.ROOT).trim()) != null) {
+            // "go back to the reservoir south" became plain "south": walk to the named place instead.
+            return walkTo(target, result);
+        }
+        String response = send(command, result);
         boolean stayed = before != null && before.equals(room);
         // "It's here!" for "go to the gazebo" while standing beside it: nothing moved.
         boolean itsHere = stayed && response.toLowerCase(Locale.ROOT).replace('\u2019', '\'').contains("it's here");
@@ -1381,6 +1553,13 @@ public final class CommandSession {
         // although the app knows the place is elsewhere.
         Exchange attempt = result.exchanges.remove(result.exchanges.size() - 1);
         if (target == null) {
+            return goToUnknown(clause, place, attempt, result);
+        }
+        return walkTo(target, result);
+    }
+
+    private boolean goToUnknown(String clause, String place, Exchange attempt, Result result) {
+        {
             int mark = result.exchanges.size();
             // A nearby room the walkthrough knows by that name ("living room" next to the kitchen).
             HintAdvisor advisor = hints;
@@ -1389,11 +1568,13 @@ public final class CommandSession {
             if (nearby != null) {
                 return walkSteps(nearby, result);
             }
-            result.exchanges.add(attempt);
+            if (attempt != null) {
+                result.exchanges.add(attempt);
+            }
             if (tryLandmark(CommandNormalizer.canonicalize(clause), result, mark)) {
                 return true;
             }
-            target = roomMentioning(place);
+            String target = roomMentioning(place);
             if (target != null) {
                 while (result.exchanges.size() > mark) {
                     result.exchanges.remove(result.exchanges.size() - 1);
@@ -1412,7 +1593,6 @@ public final class CommandSession {
             result.note("I don't know a place called " + place + " yet. Try a direction, like north or go up.");
             return false;
         }
-        return walkTo(target, result);
     }
 
     // Speech sometimes runs a room's name together ("livingroom"): split it back into the name.
@@ -1443,7 +1623,12 @@ public final class CommandSession {
     private boolean walkSteps(List<String> steps, Result result) {
         String start = room;
         for (String step : steps) {
+            String from = room;
             if (!runCommand(step, result)) {
+                return false;
+            }
+            if (moveKey(step.toLowerCase(Locale.ROOT).trim()) != null && from != null && from.equals(room)) {
+                result.note("That way is blocked, so I stopped here.");
                 return false;
             }
         }
@@ -1458,31 +1643,47 @@ public final class CommandSession {
             result.note("You are already in " + target + ".");
             return true;
         }
-        List<String> path = route(room, target);
-        if (path == null) {
-            // Arrived some way the app's map can't retrace (praying at the altar): the walkthrough's map may know.
-            HintAdvisor advisor = hints;
-            int[] state = advisor == null ? null : game.stateVector();
-            List<String> steps = state == null ? null : advisor.routeToRoom(target, room, state, MAX_WALK);
-            if (steps != null) {
-                return walkSteps(steps, result);
-            }
-            result.note("I don't know a way to " + target + " from here yet.");
-            return false;
-        }
-        String expected = room;
-        for (String direction : path) {
-            expected = map.get(expected).get(direction);
-            if (!runCommand(direction, result)) {
+        // A blocked step drops that exit from the map, so plan again from where the player stands.
+        for (int attempt = 0; attempt < 3; attempt++) {
+            List<String> path = route(room, target);
+            if (path == null) {
+                // Arrived some way the app's map can't retrace (praying at the altar): the walkthrough's map may know.
+                HintAdvisor advisor = hints;
+                int[] state = advisor == null ? null : game.stateVector();
+                List<String> steps = state == null ? null : advisor.routeToRoom(target, room, state, MAX_WALK);
+                if (steps != null) {
+                    return walkSteps(steps, result);
+                }
+                result.note("I don't know a way to " + target + " from here yet.");
                 return false;
             }
-            if (room == null || !room.equals(expected)) {
-                result.note("I expected to reach " + expected + ", so I stopped here.");
-                return false;
+            String expected = room;
+            boolean blocked = false;
+            for (String direction : path) {
+                String from = room;
+                expected = map.get(expected).get(direction);
+                if (!runCommand(direction, result)) {
+                    return false;
+                }
+                if (room != null && room.equals(from)) {
+                    if (map.containsKey(from)) {
+                        map.get(from).remove(direction);
+                    }
+                    blocked = true;
+                    break;
+                }
+                if (room == null || !room.equals(expected)) {
+                    result.note("I expected to reach " + expected + ", so I stopped here.");
+                    return false;
+                }
+            }
+            if (!blocked) {
+                result.note("You walk to " + target + ".");
+                return true;
             }
         }
-        result.note("You walk to " + target + ".");
-        return true;
+        result.note("That way is blocked, so I stopped here.");
+        return false;
     }
 
     // The nearest other room whose description mentions the place ("stairway" matches "stairs").
@@ -1608,7 +1809,7 @@ public final class CommandSession {
             }
             if (SITUATION_PHRASES.contains(canonical) || HELP_PHRASES.contains(canonical)
                     || HINT_PHRASES.contains(canonical) || UNDO_PHRASES.contains(canonical)
-                    || STUCK.matcher(canonical).matches() || EXIT_QUESTIONS.contains(canonical)
+                    || STUCK.matcher(canonical).matches() || isExitQuestion(canonical)
                     || isRepeatRequest(canonical) || isDescriptionRequest(canonical)
                     || isStop(canonical)) {
                 Result result = handle(alternative);
@@ -1854,13 +2055,21 @@ public final class CommandSession {
             text.append("You can go ").append(spokenList(exitWords, "or")).append(". ");
         }
         List<String> tries = new ArrayList<>();
-        for (String thing : things) {
-            String command = commandFor(thing);
-            if (command != null) {
-                tries.add(command);
-            }
-            if (tries.size() == 2) {
-                break;
+        String creature = creatureHere();
+        String weapon = carriedWeapon();
+        if (creature != null && weapon != null && game.contains("attack")) {
+            tries.add("attack the " + creature + " with the " + weapon);
+        }
+        // Specific actions ("open the mailbox") first, then examine or take.
+        for (boolean plain : new boolean[] {false, true}) {
+            for (String thing : things) {
+                if (tries.size() >= 2) {
+                    break;
+                }
+                String command = commandFor(thing, plain);
+                if (command != null && !tries.contains(command)) {
+                    tries.add(command);
+                }
             }
         }
         String move = untriedExit(exits);
@@ -1896,13 +2105,30 @@ public final class CommandSession {
         List<String> named = new ArrayList<>();
         for (String thing : visibleThings()) {
             String noun = nounOf(thing);
-            // "There is no door here" doesn't put a door here.
-            if (noun != null && text.contains(" " + noun + " ")
-                    && !text.matches(".* no (?:[a-z]+ )?" + noun + " .*")) {
+            // "guidebooks" in the text names the guidebook.
+            if (noun != null && (text.contains(" " + noun + " ") || text.contains(" " + noun + "s ")
+                    || text.contains(" " + noun + "es "))) {
                 named.add("the " + thing);
             }
         }
         return named.isEmpty() ? null : "Things here: " + spokenList(named, "and") + ".";
+    }
+
+    // "There is no door here" doesn't put a door here.
+    private static boolean denied(String text, String noun) {
+        return text.matches(".* no (?:[a-z]+ )?" + Pattern.quote(noun) + " .*");
+    }
+
+    // The nouns of things the player carries, so help doesn't offer to take the paper again.
+    private Set<String> carriedNouns() {
+        Set<String> nouns = new HashSet<>();
+        for (String thing : game.carried()) {
+            String noun = thing == null ? null : nounOf(thing.toLowerCase(Locale.ROOT).replaceAll("[^a-z ]+", " ").trim());
+            if (noun != null) {
+                nouns.add(noun);
+            }
+        }
+        return nouns;
     }
 
     // Names of things in the room that the game has mentioned, so hidden objects stay hidden.
@@ -1918,8 +2144,10 @@ public final class CommandSession {
             seen.append(' ').append(roomDescription);
         }
         String recent = " " + seen.toString().toLowerCase(Locale.ROOT).replaceAll("[^a-z]+", " ") + " ";
+        String described = roomDescription == null ? " "
+                : " " + roomDescription.toLowerCase(Locale.ROOT).replaceAll("[^a-z]+", " ") + " ";
         List<String> visible = new ArrayList<>();
-        Set<String> nouns = new HashSet<>();
+        Set<String> nouns = new HashSet<>(carriedNouns());
         for (String name : game.thingsHere()) {
             String clean = name == null ? "" : name.toLowerCase(Locale.ROOT).replaceAll("[^a-z ]+", " ").trim();
             if (clean.isEmpty() || room != null && clean.equalsIgnoreCase(room)) {
@@ -1927,7 +2155,7 @@ public final class CommandSession {
             }
             String noun = nounOf(clean);
             if (noun == null || NOT_THINGS.contains(noun) || DIRECTION_ABBREVIATION.containsKey(noun)
-                    || !recent.contains(" " + noun + " ") || !nouns.add(noun)) {
+                    || !recent.contains(" " + noun + " ") || denied(described, noun) || !nouns.add(noun)) {
                 continue;
             }
             visible.add(clean);
@@ -1944,7 +2172,7 @@ public final class CommandSession {
                 }
                 if ((OPEN_THINGS.contains(word) || READ_THINGS.contains(word) || MOVE_THINGS.contains(word)
                         || CLIMB_THINGS.contains(word) || LIGHT_THINGS.contains(word))
-                        && game.contains(word) && nouns.add(word)) {
+                        && game.contains(word) && !denied(described, word) && nouns.add(word)) {
                     visible.add(word);
                 }
             }
@@ -1964,6 +2192,12 @@ public final class CommandSession {
     }
 
     private String commandFor(String thing) {
+        return commandFor(thing, true);
+    }
+
+    // The most useful untried command for a thing; with plain false, only a specific verb
+    // ("open the mailbox"), never examine or take.
+    private String commandFor(String thing, boolean plain) {
         String noun = nounOf(thing);
         List<String> options = new ArrayList<>();
         if (READ_THINGS.contains(noun)) {
@@ -1981,10 +2215,16 @@ public final class CommandSession {
         if (CLIMB_THINGS.contains(noun)) {
             options.add("climb");
         }
-        options.add(game.contains("examine") || !game.contains("x") ? "examine" : "x");
-        options.add("take");
+        if (PUSH_THINGS.contains(noun)) {
+            options.add("push");
+        }
+        if (plain) {
+            options.add(game.contains("examine") || !game.contains("x") ? "examine" : "x");
+            options.add("take");
+        }
         for (String verb : options) {
-            String command = verb + " the " + noun;
+            // "push the yellow button": a colour tells several buttons apart.
+            String command = verb + " the " + (PUSH_THINGS.contains(noun) ? thing : noun);
             if (!game.contains(verb.split(" ")[0]) || tried(command)) {
                 continue;
             }
@@ -1994,7 +2234,20 @@ public final class CommandSession {
     }
 
     private boolean tried(String command) {
-        return triedCommands.contains(bareCommand(command));
+        String bare = bareCommand(command);
+        if (triedCommands.contains(bare)) {
+            return true;
+        }
+        // "examine the control panel" counts as "examine the panel".
+        String[] words = bare.split(" ");
+        for (String done : triedCommands) {
+            String[] doneWords = done.split(" ");
+            if (doneWords.length > 1 && words.length > 1 && doneWords[0].equals(words[0])
+                    && doneWords[doneWords.length - 1].equals(words[words.length - 1])) {
+                return true;
+            }
+        }
+        return false;
     }
 
     // "x the lamp" and "examine lamp" count as the same command.
@@ -2021,7 +2274,7 @@ public final class CommandSession {
         int[] state = advisor == null ? null : game.stateVector();
         boolean mapped = false;
         if (state != null) {
-            List<String> known = advisor.exitsFrom(HintAdvisor.roomId(room, state));
+            List<String> known = advisor.exitsFrom(HintAdvisor.roomId(room, state), state);
             found.addAll(known);
             mapped = !known.isEmpty();
         }

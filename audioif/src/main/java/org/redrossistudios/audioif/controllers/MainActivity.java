@@ -176,7 +176,24 @@ public class MainActivity extends AppCompatActivity implements TextToSpeech.OnIn
             spoken = text.replace(">", "").trim();
         }
         log(spoken);
-        tts.speak(spoken, queueMode, null, utteranceId);
+        // A short silence between paragraphs, so the app's notes don't run into the game's text.
+        String[] paragraphs = spoken.split("\n\\s*\n");
+        for (int i = 0; i < paragraphs.length; i++) {
+            String id = i == paragraphs.length - 1 ? utteranceId : utteranceId + PART + i;
+            if (i > 0) {
+                tts.playSilentUtterance(PARAGRAPH_PAUSE_MS, TextToSpeech.QUEUE_ADD, utteranceId + PART + "pause" + i);
+            }
+            tts.speak(paragraphs[i], i == 0 ? queueMode : TextToSpeech.QUEUE_ADD, null, id);
+        }
+    }
+
+    private static final String PART = "#part";
+    private static final long PARAGRAPH_PAUSE_MS = 400;
+
+    // "utterance-3#part1" -> "utterance-3": tapping to skip stops the whole reply.
+    private static String wholeUtterance(String utteranceId) {
+        int part = utteranceId == null ? -1 : utteranceId.indexOf(PART);
+        return part < 0 ? utteranceId : utteranceId.substring(0, part);
     }
 
     private void onUtteranceFinished(final String utteranceId) {
@@ -362,7 +379,7 @@ public class MainActivity extends AppCompatActivity implements TextToSpeech.OnIn
 
         @Override
         public void onStop(String utteranceId, boolean interrupted) {
-            onUtteranceFinished(utteranceId);
+            onUtteranceFinished(wholeUtterance(utteranceId));
         }
 
         @Override

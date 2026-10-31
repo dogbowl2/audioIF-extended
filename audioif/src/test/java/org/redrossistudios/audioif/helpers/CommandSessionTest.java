@@ -25,6 +25,7 @@ public class CommandSessionTest {
                 "z", "read", "it", "what", "out", "exit", "u", "d", "put", "x", "pull"));
         final Map<String, Map<String, String>> exits = new HashMap<>();
         final Map<String, String> replies = new HashMap<>();
+        final Map<String, String> roomText = new HashMap<>();
         final List<String> sent = new ArrayList<>();
         String room = "Field";
 
@@ -60,7 +61,7 @@ public class CommandSessionTest {
                     return "You can't go that way.";
                 }
                 room = to;
-                return to + "\nYou are in the " + to.toLowerCase() + ".";
+                return to + "\n" + roomText.getOrDefault(to, "You are in the " + to.toLowerCase() + ".");
             }
             if (replies.containsKey(command)) {
                 return replies.get(command);
@@ -767,10 +768,31 @@ public class CommandSessionTest {
     public void listsThingsAfterAMoveOrLook() {
         session.setListThings(true);
         game.things.add("brass lamp");
-        game.replies.put("look", "Field\nThere is a brass lamp here.");
-        assertEquals("Things here: the brass lamp.", lastNote(session.handle("look")));
+        game.replies.put("look", "Field\nYou are in a wide field of tall grass, and a brass lamp lies half hidden.");
+        assertEquals("You notice the brass lamp.", lastNote(session.handle("look")));
         assertEquals(null, lastNote(session.handle("go north")));
         assertEquals(null, lastNote(session.handle("take the lamp")));
+    }
+
+    @Test
+    public void leavesOutThingsJustNamedPlainly() {
+        session.setListThings(true);
+        game.things.add("brass lamp");
+        game.replies.put("look", "Field\nYou are in a field.\nThere is a brass lamp here.");
+        assertEquals(null, lastNote(session.handle("look")));
+    }
+
+    @Test
+    public void doesNotRepeatThingsOnARevisitButLookDoes() {
+        session.setListThings(true);
+        game.things.add("brass lamp");
+        game.roomText.put("Field", "You are in a wide field of tall grass, and a brass lamp lies half hidden.");
+        game.replies.put("look", "Field\n" + game.roomText.get("Field"));
+        session.handle("go north");
+        assertEquals("You notice the brass lamp.", lastNote(session.handle("go south")));
+        session.handle("go north");
+        assertEquals(null, lastNote(session.handle("go south")));
+        assertEquals("The brass lamp is here.", lastNote(session.handle("look")));
     }
 
     @Test

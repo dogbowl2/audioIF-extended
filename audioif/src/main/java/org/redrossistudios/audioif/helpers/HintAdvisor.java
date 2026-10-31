@@ -308,16 +308,46 @@ public final class HintAdvisor {
             }
         }
         String place = roomName(goalRoom);
+        // "Forest" while in another Forest: say it's a different one.
+        boolean sameName = at != null && place.equalsIgnoreCase(roomName(at));
+        String atPlace = sameName ? "At the other " + place : "At " + place;
         switch (shown) {
             case 0:
-                return "Your next step is somewhere else, at " + place + ". Say go to " + place
+                return (sameName ? "Your next step is in another " + place + ", not this one."
+                        : "Your next step is somewhere else, at " + place + ".") + " Say go to " + place
                         + ", and I'll walk you there, or say hint again for directions.";
             case 1:
-                return directions(at, goalRoom, knownExits, state) + " At " + place + ", "
+                return directions(at, goalRoom, knownExits, state) + " " + atPlace + ", "
                         + lowerFirst(thingsHint(goal.command)) + " Say hint again to hear exactly what to do.";
             default:
-                return "At " + place + ", try: " + goal.command + ". " + directions(at, goalRoom, knownExits, state);
+                return atPlace + ", try: " + goal.command + ". " + directions(at, goalRoom, knownExits, state);
         }
+    }
+
+    /**
+     * The walkthrough's route to the room of the goal the last hint was about, if {@code place}
+     * is exactly that room's name and other rooms share it ("Forest"); else null. The app's own
+     * map merges rooms by name, so "go to forest" must follow the walkthrough to the right one.
+     * An empty route means the player is already there.
+     */
+    public synchronized List<String> routeToHintedSharedName(String place, String room, int[] state) {
+        if (lastTarget < 0 || place == null || room == null || state == null) {
+            return null;
+        }
+        String goalRoom = goalRoom(index.steps.get(lastTarget), state);
+        if (goalRoom == null) {
+            return null;
+        }
+        String name = roomName(goalRoom).toLowerCase(Locale.ROOT);
+        String wanted = place.toLowerCase(Locale.ROOT).replaceFirst("^(the|a|an) ", "").trim();
+        if (!wanted.equals(name) || unique(name)) {
+            return null;
+        }
+        String from = roomId(room, state);
+        if (goalRoom.equals(from)) {
+            return new ArrayList<>();
+        }
+        return routeAvoidingNeeds(from, goalRoom, state);
     }
 
     /**

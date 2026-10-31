@@ -28,6 +28,33 @@ public class SpeechMatcherTest {
     };
 
     @Test
+    public void prefersAlternativeNamingAPlace() {
+        SpeechMatcher.Vocabulary places = new SpeechMatcher.Vocabulary() {
+            @Override
+            public boolean knows(String word) {
+                return GAME.contains(word) || word.equals("living") || word.equals("room");
+            }
+
+            @Override
+            public Collection<String> candidates() {
+                return GAME;
+            }
+
+            @Override
+            public boolean isPlaceWord(String word) {
+                return word.equals("living") || word.equals("room");
+            }
+
+            @Override
+            public boolean namesPlace(String text) {
+                return (" " + text + " ").contains(" living room ");
+            }
+        };
+        assertEquals("go to living room",
+                SpeechMatcher.choose(Arrays.asList("go to living run", "go to living room"), places));
+    }
+
+    @Test
     public void ranksCorrectedAlternativesBestFirst() {
         assertEquals(Arrays.asList("take the lamp", "take the zz"),
                 SpeechMatcher.rank(Arrays.asList("take the zz", "take the lamp", "take the lamp"), VOCABULARY));

@@ -678,7 +678,7 @@ public final class CommandSession {
         if (listThings && !result.rejected && room != null
                 && (!room.equals(roomBefore) || result.sentCommands().contains("look")
                         || result.sentCommands().contains("l"))) {
-            String things = thingsNote();
+            String things = thingsNote(room.equals(roomBefore));
             if (things != null) {
                 result.note(things);
             }
@@ -2343,29 +2343,74 @@ public final class CommandSession {
     private boolean listThings;
 
     /**
-     * After a move or "look", add a note naming the things here ("Things here: the mailbox and
+     * After a move or "look", add a note naming the things here ("You notice the mailbox and
      * the door."), so a listener knows which words to use without seeing the text.
      */
     public void setListThings(boolean listThings) {
         this.listThings = listThings;
     }
 
-    private String thingsNote() {
+    // Things already named in each room (by room id), so coming back doesn't repeat them.
+    private final Map<String, Set<String>> thingsNamed = new HashMap<>();
+    private int thingsNotes = 0;
+    // "There is a lamp here." is short enough that naming the lamp again sounds odd.
+    private static final int PLAIN_SENTENCE_WORDS = 8;
+
+    /**
+     * The note naming things here, or null. Leaves out things a short sentence just named
+     * plainly, and on a move (not "look") things already named on an earlier visit.
+     */
+    private String thingsNote(boolean looked) {
         String text = roomDescription == null ? "" : " " + roomDescription.toLowerCase(Locale.ROOT)
                 .replaceAll("[^a-z]+", " ") + " ";
         if (text.contains(" pitch black ") || text.contains(" too dark ")) {
             return null; // the player can't see anything
         }
-        List<String> named = new ArrayList<>();
+        List<String> plain = new ArrayList<>();
+        if (roomDescription != null) {
+            for (String sentence : roomDescription.toLowerCase(Locale.ROOT).split("[.!?\\n]+")) {
+                String words = sentence.replaceAll("[^a-z]+", " ").trim();
+                if (!words.isEmpty() && words.split(" ").length <= PLAIN_SENTENCE_WORDS) {
+                    plain.add(" " + words + " ");
+                }
+            }
+        }
+        Set<String> named = thingsNamed.computeIfAbsent(HintAdvisor.roomId(room, game.stateVector()),
+                k -> new HashSet<>());
+        List<String> listed = new ArrayList<>();
         for (String thing : visibleThings()) {
             String noun = nounOf(thing);
             // "guidebooks" in the text names the guidebook.
-            if (noun != null && (text.contains(" " + noun + " ") || text.contains(" " + noun + "s ")
-                    || text.contains(" " + noun + "es "))) {
-                named.add("the " + thing);
+            if (noun == null || !mentions(text, noun)) {
+                continue;
+            }
+            boolean before = !named.add(thing);
+            boolean plainly = false;
+            for (String sentence : plain) {
+                plainly |= mentions(sentence, noun);
+            }
+            if (!plainly && (looked || !before)) {
+                listed.add("the " + thing);
             }
         }
-        return named.isEmpty() ? null : "Things here: " + spokenList(named, "and") + ".";
+        if (listed.isEmpty()) {
+            return null;
+        }
+        String list = spokenList(listed, "and");
+        switch (thingsNotes++ % 3) {
+            case 0:
+                return "You notice " + list + ".";
+            case 1:
+                return Character.toUpperCase(list.charAt(0)) + list.substring(1)
+                        + (listed.size() == 1 ? " is" : " are") + " here.";
+            default:
+                return "Worth a look: " + list + ".";
+        }
+    }
+
+    private static boolean mentions(String paddedText, String noun) {
+        return paddedText.contains(" " + noun + " ") || paddedText.contains(" " + noun + "s ")
+                || paddedText.contains(" " + noun + "es ");
     }
 
     // "There is no door here" doesn't put a door here.

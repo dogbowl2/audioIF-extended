@@ -98,8 +98,8 @@ public final class ZGame implements CommandSession.Game {
                     child = machine.getSibling(child)) {
                 String name = objectName(machine, child);
                 names.add(name);
-                if (PLAYER_NAMES.contains(name.toLowerCase(java.util.Locale.ROOT))) {
-                    continue; // what the player carries isn't "here"
+                if (PLAYER_NAMES.contains(name.toLowerCase(java.util.Locale.ROOT)) || CommandSession.isCreature(name)) {
+                    continue; // what the player or the thief carries isn't "here"
                 }
                 for (int inner = machine.getChild(child); inner != 0 && names.size() < 40;
                         inner = machine.getSibling(inner)) {
@@ -112,8 +112,103 @@ public final class ZGame implements CommandSession.Game {
         return names;
     }
 
+    /**
+     * Dictionary words that name the object called {@code thing} here or carried ("prayer" and
+     * "inscription" for the prayer), from its synonym property; empty if not found.
+     */
+    @Override
+    public List<String> nounsFor(String thing) {
+        List<String> words = new ArrayList<>();
+        try {
+            Machine machine = executionControl.getMachine();
+            int location = machine.readUnsigned16(machine.readUnsigned16(0x0C));
+            int object = location <= 0 ? 0 : findNamed(machine, location, thing, 2);
+            if (object == 0) {
+                return words;
+            }
+            int dictionary = machine.readUnsigned16(0x08);
+            int separators = machine.readUnsigned8(dictionary);
+            int entryLength = machine.readUnsigned8(dictionary + 1 + separators);
+            int entries = Math.abs((short) machine.readUnsigned16(dictionary + 2 + separators));
+            int first = dictionary + 4 + separators;
+            int end = first + entries * entryLength;
+            int textBytes = machine.getVersion() <= 3 ? 4 : 6;
+            for (int property = machine.getNextProperty(object, 0); property != 0;
+                    property = machine.getNextProperty(object, property)) {
+                int address = machine.getPropertyAddress(object, property);
+                int length = machine.getPropertyLength(address);
+                if (length < 2 || length % 2 != 0) {
+                    continue;
+                }
+                List<String> found = new ArrayList<>();
+                for (int i = 0; i < length; i += 2) {
+                    int word = machine.readUnsigned16(address + i);
+                    if (word < first || word >= end || (word - first) % entryLength != 0) {
+                        found = null;
+                        break;
+                    }
+                    found.add(machine.decode2Zscii(word, textBytes).trim().toLowerCase(java.util.Locale.ROOT));
+                }
+                if (found != null) {
+                    words.addAll(found);
+                }
+            }
+        } catch (RuntimeException e) {
+            words.clear();
+        }
+        return words;
+    }
+
+    private static int findNamed(Machine machine, int parent, String name, int depth) {
+        for (int child = machine.getChild(parent); child != 0; child = machine.getSibling(child)) {
+            if (objectName(machine, child).equalsIgnoreCase(name)) {
+                return child;
+            }
+            if (depth > 1) {
+                int inner = findNamed(machine, child, name, depth - 1);
+                if (inner != 0) {
+                    return inner;
+                }
+            }
+        }
+        return 0;
+    }
+
     private static final java.util.Set<String> PLAYER_NAMES = new java.util.HashSet<>(java.util.Arrays.asList(
             "cretin", "you", "yourself", "me", "adventurer", "player"));
+
+    /**
+     * The name of the creature carrying something called {@code noun} ("thief" for "torch"),
+     * searching the whole object tree, or null if no creature has one.
+     */
+    @Override
+    public String holderOf(String noun) {
+        if (noun == null || noun.isEmpty()) {
+            return null;
+        }
+        try {
+            Machine machine = executionControl.getMachine();
+            int count = GameStateReader.objectCount(machine);
+            for (int object = 1; object <= count; object++) {
+                String name = objectName(machine, object).toLowerCase(java.util.Locale.ROOT);
+                if (!(" " + name + " ").contains(" " + noun + " ")) {
+                    continue;
+                }
+                // The thief keeps his loot in his bag, so look two levels up.
+                int parent = machine.getParent(object);
+                for (int up = 0; up < 2 && parent > 0 && parent <= count; up++) {
+                    String holder = objectName(machine, parent);
+                    if (CommandSession.isCreature(holder)) {
+                        return holder;
+                    }
+                    parent = machine.getParent(parent);
+                }
+            }
+        } catch (RuntimeException e) {
+            return null;
+        }
+        return null;
+    }
 
     /** Short names of what the player carries, from the object tree; empty if unknown. Works in the dark. */
     @Override

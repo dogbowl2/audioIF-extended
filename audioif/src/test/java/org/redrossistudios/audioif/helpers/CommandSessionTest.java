@@ -118,6 +118,19 @@ public class CommandSessionTest {
         public List<String> thingsHere() {
             return room.equals("Field") ? things : new ArrayList<>();
         }
+
+        final Map<String, String> holders = new HashMap<>();
+        final Map<String, List<String>> nouns = new HashMap<>();
+
+        @Override
+        public String holderOf(String noun) {
+            return holders.get(noun);
+        }
+
+        @Override
+        public List<String> nounsFor(String thing) {
+            return nouns.getOrDefault(thing, new ArrayList<>());
+        }
     }
 
     private FakeGame game;
@@ -193,6 +206,68 @@ public class CommandSessionTest {
     public void goToUnknownPlaceExplains() {
         CommandSession.Result result = session.handle("go to the castle");
         assertTrue(result.text().contains("I don't know a place called castle"));
+    }
+
+    @Test
+    public void bareRoomNameWalksThere() {
+        session.handle("go north");
+        session.handle("go north");
+        CommandSession.Result result = session.handle("field");
+        assertEquals("Field", game.room);
+        assertTrue(result.text().contains("You walk to Field."));
+    }
+
+    @Test
+    public void hintAlikesAskForAHint() {
+        assertFalse(session.handleSpeech(Arrays.asList("pants", "chance", "dance")).text().contains("I don't know"));
+        assertTrue(game.sent.isEmpty());
+        session.handleSpeech(Arrays.asList("aunt", "ant"));
+        assertTrue(game.sent.isEmpty());
+    }
+
+    @Test
+    public void answersWhichQuestionWithDistinctNoun() {
+        game.replies.put("read the prayer", "Which prayer do you mean, the prayer or the black book?");
+        game.replies.put("read the inscription", "The prayer is inscribed in an ancient script.");
+        game.nouns.put("prayer", Arrays.asList("prayer", "inscription"));
+        game.nouns.put("black book", Arrays.asList("book", "prayer"));
+        session.handle("read the prayer");
+        CommandSession.Result result = session.handle("the prayer");
+        assertEquals(Arrays.asList("read the inscription"), result.sentCommands());
+        assertTrue(result.text().contains("(I took that as: read the inscription.)"));
+    }
+
+    @Test
+    public void answersWhichQuestionByName() {
+        game.replies.put("read the prayer", "Which prayer do you mean, the prayer or the black book?");
+        game.replies.put("read the black book", "Commandment #12592...");
+        session.handle("read the prayer");
+        CommandSession.Result result = session.handle("the black book");
+        assertEquals(Arrays.asList("read the black book"), result.sentCommands());
+    }
+
+    @Test
+    public void saysWhoHoldsAMissingThing() {
+        game.replies.put("take the torch", "You can't see any torch here!");
+        game.words.add("torch");
+        game.holders.put("torch", "thief");
+        CommandSession.Result result = session.handle("take the torch");
+        assertTrue(result.text().contains("The thief has the torch now."));
+    }
+
+    @Test
+    public void roomDescriptionStartsAtLastTitle() {
+        String response = "You are carrying:\n  A lamp\nHades\nYou are outside a large gateway.";
+        assertEquals("Hades\nYou are outside a large gateway.", CommandSession.fromRoomTitle(response, "Hades"));
+        assertEquals("No title here.", CommandSession.fromRoomTitle("No title here.", "Hades"));
+    }
+
+    @Test
+    public void recapHasRoomAndLastReply() {
+        session.handle("open the box");
+        String recap = session.recap();
+        assertTrue(recap.contains("You are in a field."));
+        assertTrue(recap.contains("Opening the box reveals a leaflet."));
     }
 
     @Test

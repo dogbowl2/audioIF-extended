@@ -17,17 +17,24 @@ public final class GameStateReader {
     private GameStateReader() {
     }
 
+    /** The number of objects: the object table runs up to the first object's property table. */
+    public static int objectCount(Machine machine) {
+        boolean small = machine.getVersion() <= 3;
+        int entrySize = small ? 9 : 14;
+        int entries = machine.readUnsigned16(0x0A) + (small ? 31 : 63) * 2;
+        int firstProperties = machine.readUnsigned16(entries + (small ? 7 : 12));
+        return Math.max(0, (firstProperties - entries) / entrySize);
+    }
+
     public static int[] read(Machine machine) {
         int version = machine.getVersion();
         boolean small = version <= 3;
         int defaults = small ? 31 : 63;
         int entrySize = small ? 9 : 14;
         int attributeBytes = small ? 4 : 6;
-        int propertyOffset = small ? 7 : 12;
         int objectTable = machine.readUnsigned16(0x0A);
         int entries = objectTable + defaults * 2;
-        int firstProperties = machine.readUnsigned16(entries + propertyOffset);
-        int count = Math.max(0, (firstProperties - entries) / entrySize);
+        int count = objectCount(machine);
         int globals = machine.readUnsigned16(0x0C);
 
         int perObject = 1 + attributeBytes * 8;

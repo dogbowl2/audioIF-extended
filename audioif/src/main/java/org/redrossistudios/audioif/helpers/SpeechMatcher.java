@@ -41,6 +41,16 @@ public final class SpeechMatcher {
         default boolean isGameWord(String word) {
             return knows(word);
         }
+
+        /** True if the word is part of a known room's name ("room" in "Torch Room"). */
+        default boolean isPlaceWord(String word) {
+            return false;
+        }
+
+        /** True if the text contains the whole name of a known room ("go to torch room"). */
+        default boolean namesPlace(String text) {
+            return false;
+        }
     }
 
     /** Common mishearings that sound-alike matching can't settle on its own. */
@@ -76,8 +86,8 @@ public final class SpeechMatcher {
 
     /**
      * Returns the alternative that best fits the vocabulary, already corrected: fewest unknown
-     * words, then most words naming things the player can see, then fewest changes, then
-     * fewest words only the app knows.
+     * words, then most words naming things the player can see, then naming a known room,
+     * then fewest changes, then fewest words only the app knows.
      * The first alternative wins ties, since the recognizer ranks them.
      */
     public static String choose(List<String> alternatives, Vocabulary vocabulary) {
@@ -110,12 +120,14 @@ public final class SpeechMatcher {
                 if (vocabulary.isVisible(word)) {
                     visible++;
                 }
-                if (!NEVER_CHANGE.contains(word) && word.length() > 1 && !vocabulary.isGameWord(word)) {
+                if (!NEVER_CHANGE.contains(word) && word.length() > 1 && !vocabulary.isGameWord(word)
+                        && !vocabulary.isPlaceWord(word)) {
                     appOnly++;
                 }
             }
+            int place = vocabulary.namesPlace(corrected) ? 1 : 0;
             texts.add(corrected);
-            scores.add(new int[]{counts[0], -visible, counts[1], appOnly, texts.size()});
+            scores.add(new int[]{counts[0], -visible, -place, counts[1], appOnly, texts.size()});
         }
         List<Integer> order = new ArrayList<>();
         for (int i = 0; i < texts.size(); i++) {

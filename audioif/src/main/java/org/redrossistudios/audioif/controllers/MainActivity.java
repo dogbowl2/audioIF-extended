@@ -89,10 +89,16 @@ public class MainActivity extends AppCompatActivity implements TextToSpeech.OnIn
     // How long the app keeps listening quietly while the player says nothing.
     private static final long QUIET_LISTEN_MS = 60000;
     private static final long QUIET_RESTART_DELAY_MS = 400;
+    // Lets the speaker's sound die away, so the recognizer isn't still hearing the app when the player starts.
+    private static final long LISTEN_AFTER_SPEECH_MS = 300;
     private int failedListens = 0;
     private boolean paused = false;
     private boolean speechStarted = false;
     private long quietSince = 0;
+    // Timing for the play log, to tell whether the start of a command was cut off.
+    private long listenStartedAt = 0;
+    private long speechEndedAt = 0;
+    private String lastPartial = null;
     private final android.os.Handler handler = new android.os.Handler(android.os.Looper.getMainLooper());
 
     private void createRecognizer() {
@@ -117,6 +123,7 @@ public class MainActivity extends AppCompatActivity implements TextToSpeech.OnIn
         intent.putExtra(RecognizerIntent.EXTRA_CALLING_PACKAGE, getPackageName());
         // Several guesses let CommandSession pick the one that matches the game's words.
         intent.putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 5);
+        intent.putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true);
         if (session != null && Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             intent.putStringArrayListExtra(RecognizerIntent.EXTRA_BIASING_STRINGS,
                     new ArrayList<>(session.speechHints()));
@@ -127,7 +134,17 @@ public class MainActivity extends AppCompatActivity implements TextToSpeech.OnIn
             quietSince = System.currentTimeMillis();
         }
         setStatus("Listening\u2026 say a command");
+        listenStartedAt = System.currentTimeMillis();
+        lastPartial = null;
+        if (playLog != null) {
+            playLog.event(speechEndedAt == 0 ? "listen"
+                    : "listen (" + (listenStartedAt - speechEndedAt) + " ms after the app spoke)");
+        }
         speechRecognizer.startListening(intent);
+    }
+
+    private long sinceListen() {
+        return System.currentTimeMillis() - listenStartedAt;
     }
 
     private void stopVoiceInput() {
@@ -168,7 +185,15 @@ public class MainActivity extends AppCompatActivity implements TextToSpeech.OnIn
             public void run() {
                 if (utteranceId != null && utteranceId.equals(pendingUtteranceId)) {
                     pendingUtteranceId = null;
-                    startVoiceInput();
+                    speechEndedAt = System.currentTimeMillis();
+                    handler.postDelayed(new Runnable() {
+                        @Override
+                        public void run() {
+                            if (!isListening && pendingUtteranceId == null && !paused && !isFinishing()) {
+                                startVoiceInput();
+                            }
+                        }
+                    }, LISTEN_AFTER_SPEECH_MS);
                 }
             }
         });
@@ -176,11 +201,18 @@ public class MainActivity extends AppCompatActivity implements TextToSpeech.OnIn
 
     private final RecognitionListener recognitionListener = new RecognitionListener() {
         @Override
-        public void onReadyForSpeech(Bundle params) { }
+        public void onReadyForSpeech(Bundle params) {
+            if (playLog != null) {
+                playLog.event("ready (+" + sinceListen() + " ms)");
+            }
+        }
 
         @Override
         public void onBeginningOfSpeech() {
             speechStarted = true;
+            if (playLog != null) {
+                playLog.event("speech began (+" + sinceListen() + " ms)");
+            }
         }
 
         @Override
@@ -190,7 +222,11 @@ public class MainActivity extends AppCompatActivity implements TextToSpeech.OnIn
         public void onBufferReceived(byte[] buffer) { }
 
         @Override
-        public void onEndOfSpeech() { }
+        public void onEndOfSpeech() {
+            if (playLog != null) {
+                playLog.event("speech ended (+" + sinceListen() + " ms)");
+            }
+        }
 
         @Override
         public void onError(int error) {
@@ -200,7 +236,8 @@ public class MainActivity extends AppCompatActivity implements TextToSpeech.OnIn
             isListening = false;
             Log.w("SpeechRecognizer", "Recognition error: " + error);
             if (playLog != null) {
-                playLog.event("speech error " + error + " (" + speechErrorName(error) + ")");
+                playLog.event("speech error " + error + " (" + speechErrorName(error) + ", +" + sinceListen() + " ms"
+                        + (lastPartial != null ? ", partly heard: " + lastPartial : "") + ")");
             }
             if (error == SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS) {
                 setStatus("Microphone permission needed");
@@ -209,10 +246,26 @@ public class MainActivity extends AppCompatActivity implements TextToSpeech.OnIn
                         TextToSpeech.QUEUE_ADD, null, "permission-error");
                 return;
             }
-            if (error == SpeechRecognizer.ERROR_CLIENT || error == SpeechRecognizer.ERROR_RECOGNIZER_BUSY
-                    || error == SpeechRecognizer.ERROR_SERVER_DISCONNECTED) {
+            boolean recreated = error == SpeechRecognizer.ERROR_CLIENT
+                    || error == SpeechRecognizer.ERROR_RECOGNIZER_BUSY
+                    || error == SpeechRecognizer.ERROR_SERVER_DISCONNECTED;
+            if (recreated) {
                 // Restarting a recognizer in this state just fails again, so start fresh.
                 createRecognizer();
+            }
+            // The recognizer gave up but had partly heard the player: use that rather than
+            // making them say it again.
+            if (lastPartial != null && (error == SpeechRecognizer.ERROR_NO_MATCH
+                    || error == SpeechRecognizer.ERROR_CLIENT)) {
+                List<String> partial = new ArrayList<>();
+                partial.add(lastPartial);
+                lastPartial = null;
+                failedListens = 0;
+                if (playLog != null) {
+                    playLog.heard(partial, null);
+                }
+                handleSpeech(partial);
+                return;
             }
             // The recognizer often gives up (client error, no match) before the player has said
             // anything, for example while they're thinking. That isn't a miss, so listen again
@@ -227,7 +280,7 @@ public class MainActivity extends AppCompatActivity implements TextToSpeech.OnIn
                             startVoiceInput();
                         }
                     }
-                }, QUIET_RESTART_DELAY_MS);
+                }, recreated ? 0 : QUIET_RESTART_DELAY_MS); // a fresh recognizer can start at once
                 return;
             }
             if (!speechStarted && isQuietError(error)) {
@@ -256,7 +309,16 @@ public class MainActivity extends AppCompatActivity implements TextToSpeech.OnIn
         }
 
         @Override
-        public void onPartialResults(Bundle partialResults) { }
+        public void onPartialResults(Bundle partialResults) {
+            ArrayList<String> partial = partialResults.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION);
+            String text = partial == null || partial.isEmpty() ? null : partial.get(0).trim();
+            if (text != null && !text.isEmpty() && !text.equals(lastPartial)) {
+                lastPartial = text;
+                if (playLog != null) {
+                    playLog.event("partial (+" + sinceListen() + " ms): " + text);
+                }
+            }
+        }
 
         @Override
         public void onEvent(int eventType, Bundle params) { }
@@ -265,7 +327,9 @@ public class MainActivity extends AppCompatActivity implements TextToSpeech.OnIn
     // Asks again, but stops after a few misses in a row instead of looping forever.
     private void retryOrPause() {
         if (++failedListens < MAX_FAILED_LISTENS) {
-            speakThenListen("Sorry, I didn't catch that. Please try again.", false);
+            // Short words like "hint" are the easiest to lose; a longer phrase is heard better.
+            speakThenListen(failedListens == 1 ? "Sorry, I didn't catch that. Please try again."
+                    : "Sorry, I still didn't catch that. Try a longer phrase, like: give me a hint.", false);
             return;
         }
         pauseListening();
@@ -414,7 +478,7 @@ public class MainActivity extends AppCompatActivity implements TextToSpeech.OnIn
     private void saveProgress() {
         if (game != null && autoSave != null) {
             byte[] state = game.saveState();
-            autoSave.save(state, storyField.getText().toString());
+            autoSave.save(state, session != null ? session.recap() : storyField.getText().toString());
             if (state != null) {
                 autoSave.saveHintSkips(session.hintSkips());
             }

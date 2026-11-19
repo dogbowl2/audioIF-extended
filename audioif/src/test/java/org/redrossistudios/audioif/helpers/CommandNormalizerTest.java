@@ -28,6 +28,13 @@ public class CommandNormalizerTest {
     }
 
     @Test
+    public void mapsSwimmingAndDivingToDirections() {
+        assertEquals("W", CommandNormalizer.normalize("swim west", ALL_WORDS));
+        assertEquals("D", CommandNormalizer.normalize("swim down", ALL_WORDS));
+        assertEquals("D", CommandNormalizer.normalize("dive down", ALL_WORDS));
+    }
+
+    @Test
     public void mapsPrayingAtThings() {
         assertEquals("pray", CommandNormalizer.normalize("pray at the altar", ALL_WORDS));
         assertEquals("pray", CommandNormalizer.normalize("say a prayer", ALL_WORDS));

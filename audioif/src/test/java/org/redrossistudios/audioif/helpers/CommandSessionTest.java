@@ -693,6 +693,64 @@ public class CommandSessionTest {
     }
 
     @Test
+    public void skipThisHintMovesToTheNextStep() {
+        game.state = new int[] {0};
+        session.setHintAdvisor(new HintAdvisor(new WalkthroughIndex(Arrays.asList(
+                new WalkthroughIndex.Step("get egg", "Field", null, new int[] {0}, new int[] {1}),
+                new WalkthroughIndex.Step("open box", "Field", null, new int[] {0}, new int[] {2})))));
+        session.handle("hint");
+        assertTrue(session.handle("skip this hint").text().startsWith("Okay, I'll skip that step."));
+        session.handle("hint");
+        assertEquals("Try: open box.", session.handle("hint").text());
+        assertTrue(game.sent.isEmpty());
+    }
+
+    @Test
+    public void dropsALoneInterjectionClause() {
+        assertEquals(Arrays.asList("take the lamp"), session.handle("um, take the lamp").sentCommands());
+    }
+
+    @Test
+    public void repeatsWithAMisheardCount() {
+        session.handle("z for times");
+        assertEquals(Arrays.asList("z", "z", "z", "z"), game.sent);
+    }
+
+    @Test
+    public void modifierRetryKeepsTheThingActedOn() {
+        game.words.addAll(Arrays.asList("egg", "knife", "mailbox", "of"));
+        game.replies.put("open the knife", "You can't open that.");
+        game.replies.put("take the mailbox", "It is securely anchored.");
+        game.replies.put("take the leaflet", "You can't see any leaflet here.");
+        assertFalse(session.handle("open the egg with the knife").sentCommands().contains("open the knife"));
+        assertFalse(session.handle("take the leaflet out of the mailbox").sentCommands().contains("take the mailbox"));
+    }
+
+    @Test
+    public void walkStopsBeforeAStepThatCantBeTakenBack() {
+        game.words.addAll(Arrays.asList("jump", "lake"));
+        game.state = new int[] {0};
+        session.setHintAdvisor(new HintAdvisor(new WalkthroughIndex(Arrays.asList(
+                new WalkthroughIndex.Step("jump in lake", "Field", "Path", new int[0], new int[0]),
+                new WalkthroughIndex.Step("open box", "Path", null, new int[] {0}, new int[] {1})))));
+        CommandSession.Result result = session.handle("go to the path");
+        assertTrue(result.text(), result.text().contains("The next step is: jump in lake."));
+        assertFalse(game.sent.toString(), game.sent.contains("jump in lake"));
+    }
+
+    @Test
+    public void walkStopsWhenItGetsDark() {
+        session.handle("go north");
+        session.handle("go north");
+        session.handle("go south");
+        session.handle("go south");
+        game.roomText.put("Path", "It is pitch black. You are likely to be eaten by a grue.");
+        CommandSession.Result result = session.handle("go to the clearing");
+        assertEquals("Path", game.room);
+        assertTrue(result.text(), result.text().contains("Something happened on the way, so I stopped here."));
+    }
+
+    @Test
     public void hintSkipsSurviveARestart() {
         game.words.addAll(Arrays.asList("get", "egg"));
         game.replies.put("take the egg", "You already have that!");

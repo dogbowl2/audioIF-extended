@@ -1,4 +1,4 @@
-﻿# Created by https://www.gitignore.io/api/androidstudio
+# Created by https://www.gitignore.io/api/androidstudio
 
 ### AndroidStudio ###
 # Covers files to be ignored for android development using Android Studio.
@@ -133,4 +133,5 @@ fabric.properties
 
 !/gradle/wrapper/gradle-wrapper.jar
 
-# End of https://www.gitignore.io/api/androidstudiotools/sava/__pycache__/
+# End of https://www.gitignore.io/api/androidstudio
+tools/sava/__pycache__/

@@ -52,7 +52,8 @@ An Android app for playing interactive fiction (Z-machine games such as Zork) by
 - Rooms are identified by name plus `#` and the location object (global 0, read from the state vector), because Zork reuses room names such as "Clearing" and "Forest". Speak only the name (`HintAdvisor.roomName`).
 - Zork's map isn't symmetric. Routes use only exits that the replay actually tried. Guessed reverse exits (`CommandSession.guessedExits`) are left out of the hint routes, and `CommandSession.route` uses them only when no route of confirmed exits exists. Exit lists say "maybe back to X" for them.
 - `HintAdvisor.noteMove` records exits the player found blocked (`playerBlocked`), so hint routes and exit lists skip them. The barred trap door above the cellar is only known after the player tries it.
-- `CommandSession.retryWithoutModifier` retries "verb the A with/of/on the B" as "verb the B" or "verb the A" after a parser error, hiding the error like `retryWithNoun`.
+- `CommandSession.retryWithoutModifier` retries "verb the A with/of/on the B" as "verb the B" or "verb the A" after a parser error, hiding the error like `retryWithNoun`. For `ACTING_VERBS` (take, open, move…) it retries only "verb the A", so "take the leaflet out of the mailbox" never becomes "take the mailbox".
+- Walks (`walkTo`, `walkSteps`) stop after a step whose reply matches `WALK_EVENT` (death, thief, darkness, drowning). Hint routes also stop before a non-travel or `RISKY_MOVES` step and speak it as "The next step is: …". "skip this hint" calls `HintAdvisor.skipHinted`.
 - Zork's Loud Room echoes "word word ..." for every non-movement command, which players hear as a stuck loop. `CommandSession.runCommand` adds `ECHO_NOTE` (say "echo" or leave).
 - Hint skips are saved next to the auto-save (`AutoSave.saveHintSkips`, `CommandSession.hintSkips`/`restoreHintSkips`); the session holds them until the `HintAdvisor` finishes loading.
 - `SpeechMatcher.rank` orders alternatives by fewest unknown words, then most words for visible things, then naming a known room, then fewest changes, then fewest app-only words (such as "road", a landmark word Zork doesn't know). `choose` returns the first. When the game rejects the chosen one as not understood, `CommandSession.handleSpeech` retries up to 2 more with no unknown words (parser errors don't use a turn).
@@ -81,4 +82,6 @@ An Android app for playing interactive fiction (Z-machine games such as Zork) by
 - Possible next steps:
   - Playtest hints through Zork II and III on the phone.
   - Grow `CommandNormalizer` from new play-harness transcripts.
+  - Open issues from the November agent playtests: exit lists are hard to follow by ear; no suggestions for misspellings in text mode; "how many points"/"I'm lost" aren't handled; "bird s nest" in the spoken note; the Zork II Carousel Room route; silence after Zork III ends; hints drop step conditions.
+  - Test SAVA on the phone (possible microphone conflict with the recognizer).
   - ZMPP 1.5 (2011) is the latest Java version. `zmpp/UPSTREAM.md` explains why the Scala rewrite zmpp2 isn't a drop-in update.

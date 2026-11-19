@@ -183,6 +183,10 @@ public final class CommandSession {
             "next hint", "another hint", "hint please", "a hint", "the hint", "more hints", "one more hint");
     // "I think we're stuck yeah", "will tell you what to do, hint".
     private static final Pattern STUCK = Pattern.compile("^(?:.* )?(?:we are|i am|were|we re|im) (?:really |so |a bit |kind of )?stuck\\b.*$");
+    // "skip this hint", "give me a different hint", "I already did that" (canonical "that" is "the").
+    private static final Pattern SKIP_HINT = Pattern.compile("^(?:please )?(?:(?:skip|pass)(?: (?:the|this))? (?:hint|step)"
+            + "(?: please)?|(?:give me |i want |can i have )?(?:a )?(?:different|other) hint|"
+            + "i (?:already )?did the(?: already)?|i have already done the|the is (?:already )?done)$");
     // "repeat", "say that description again": the app reads its last words again.
     private static final Set<String> REPEAT_PHRASES = canonicalSet("repeat", "repeat that", "repeat it",
             "repeat please", "please repeat", "say that again", "say it again", "say again", "come again",
@@ -260,6 +264,8 @@ public final class CommandSession {
     private static final Pattern MODIFIED_THING = Pattern.compile("^(read|examine|x|look at|take|get|pick up|open|"
             + "search|move|push|pull|turn|climb|close|light) (?:the )?([a-z]+(?: [a-z]+)?) (with|of|on|upon|in) "
             + "(?:the )?([a-z]+(?: [a-z]+)?)$");
+    private static final Set<String> ACTING_VERBS = set("take", "get", "pick up", "open", "move", "push", "pull",
+            "turn", "close", "light");
     private static final Set<String> WEAPONS = set("sword", "knife", "axe", "dagger", "stiletto", "blade");
     private static final Set<String> PUSH_THINGS = set("button", "buttons", "switch", "lever");
     private static final Set<String> CHATTER_STARTERS = set("i", "it", "that", "this", "because", "since",
@@ -329,7 +335,8 @@ public final class CommandSession {
                     + "(?: back)? (?:to|into|toward|towards) (?:the )?(.+)$");
     private static final Pattern GO_BARE = Pattern.compile("^(?:go|walk|head|run|travel) (?:the )?(.+)$");
     private static final Pattern USE_ON = Pattern.compile("^use (?:the )?(.+?) (?:on|with|in|to open) (?:the )?(.+)$");
-    private static final Pattern REPEAT = Pattern.compile("^(.+?) (twice|two times|three times|four times|five times|(\\d) times)$");
+    private static final Pattern REPEAT = Pattern.compile("^(.+?) (twice|two times|to times|too times|three times|tree times|"
+            + "four times|for times|five times|(\\d) times)$");
     private static final Pattern CLAUSE_SPLIT = Pattern.compile(
             "\\s*(?:[.;!?]+\\s+|,?\\s+and then\\s+|,\\s*then\\s+|\\s+then\\s+|,\\s*after that\\s+|\\s+after that\\s+)\\s*");
     private static final Pattern AND_SPLIT = Pattern.compile("\\s*(?:,\\s*and\\s+|\\s+and\\s+|,\\s*)");
@@ -594,6 +601,15 @@ public final class CommandSession {
         }
         if ((HINT_PHRASES.contains(canonical) || STUCK.matcher(canonical).matches()) && !game.contains("hint")) {
             result.note(hint());
+            return result;
+        }
+        if (SKIP_HINT.matcher(canonical).matches() && !game.contains("hint")) {
+            HintAdvisor advisor = hints;
+            if (advisor != null && advisor.skipHinted()) {
+                result.note("Okay, I'll skip that step. " + hint());
+            } else {
+                result.note(hint());
+            }
             return result;
         }
         if (UNDO_PHRASES.contains(canonical) && !game.contains("undo")) {
@@ -1448,10 +1464,13 @@ public final class CommandSession {
             return false;
         }
         String verb = modified.group(1);
-        String first = modified.group(2);
+        String first = modified.group(2).replaceFirst(" (?:out|off|up|down|away|back)$", "");
         String second = modified.group(4);
         // "the wall with engravings" is named by its engravings; "the bottle of water" is a bottle.
-        List<String> tries = modified.group(3).equals("with") ? Arrays.asList(second, first)
+        // Acting on a thing ("take the leaflet out of the mailbox", "open the egg with the knife")
+        // must not switch to the container or tool.
+        List<String> tries = ACTING_VERBS.contains(verb) ? Collections.singletonList(first)
+                : modified.group(3).equals("with") ? Arrays.asList(second, first)
                 : Arrays.asList(first, second);
         int mark = result.exchanges.size();
         for (String thing : tries) {
@@ -1836,13 +1855,27 @@ public final class CommandSession {
     // Runs a walkthrough route; says where the player got to only if they moved.
     private boolean walkSteps(List<String> steps, Result result) {
         String start = room;
-        for (String step : steps) {
+        for (int i = 0; i < steps.size(); i++) {
+            String step = steps.get(i);
+            String lower = step.toLowerCase(Locale.ROOT).trim();
+            // A route can include "jump in lake", which can't be taken back; let the player decide.
+            if (!isTravel(lower) || RISKY_MOVES.contains(lower.split(" ")[0])) {
+                if (room != null && !room.equals(start)) {
+                    result.note("You walk to " + room + ".");
+                }
+                result.note("The next step is: " + lower + ". Say it if you want to go on.");
+                return false;
+            }
             String from = room;
+            int mark = result.exchanges.size();
             if (!runCommand(step, result)) {
                 return false;
             }
-            if (moveKey(step.toLowerCase(Locale.ROOT).trim()) != null && from != null && from.equals(room)) {
+            if (moveKey(lower) != null && from != null && from.equals(room)) {
                 result.note("That way is blocked, so I stopped here.");
+                return false;
+            }
+            if (i < steps.size() - 1 && stoppedByEvent(result, mark)) {
                 return false;
             }
         }
@@ -1850,6 +1883,23 @@ public final class CommandSession {
             result.note("You walk to " + room + ".");
         }
         return true;
+    }
+
+    // Moves that can't be undone in the story (Zork III's lake jump ruins the lamp).
+    private static final Set<String> RISKY_MOVES = set("jump", "dive", "leap");
+    private static final Pattern WALK_EVENT = Pattern.compile("(?i)you have died|you are dead|\\bthief\\b|"
+            + "pitch black|too dark to see|drown");
+
+    // Something happened on the way (dark, death, the thief): stop walking so the player hears it.
+    private boolean stoppedByEvent(Result result, int mark) {
+        for (int i = mark; i < result.exchanges.size(); i++) {
+            String response = result.exchanges.get(i).response;
+            if (response != null && WALK_EVENT.matcher(response).find()) {
+                result.note("Something happened on the way, so I stopped here.");
+                return true;
+            }
+        }
+        return false;
     }
 
     private boolean walkTo(String target, Result result) {
@@ -1873,9 +1923,11 @@ public final class CommandSession {
             }
             String expected = room;
             boolean blocked = false;
-            for (String direction : path) {
+            for (int i = 0; i < path.size(); i++) {
+                String direction = path.get(i);
                 String from = room;
                 expected = map.get(expected).get(direction);
+                int mark = result.exchanges.size();
                 if (!runCommand(direction, result)) {
                     return false;
                 }
@@ -1888,6 +1940,9 @@ public final class CommandSession {
                 }
                 if (room == null || !room.equals(expected)) {
                     result.note("I expected to reach " + expected + ", so I stopped here.");
+                    return false;
+                }
+                if (i < path.size() - 1 && stoppedByEvent(result, mark)) {
                     return false;
                 }
             }
@@ -2882,14 +2937,23 @@ public final class CommandSession {
                 clauses.add(current.toString());
             }
         }
+        // "um, take the lamp": a lone "um" isn't a command.
+        if (clauses.size() > 1) {
+            clauses.removeIf(clause -> INTERJECTIONS.contains(
+                    clause.toLowerCase(Locale.ROOT).replaceAll("[^a-z ]+", " ").trim()));
+        }
         return clauses;
     }
 
+    private static final Set<String> INTERJECTIONS = set("um", "uh", "umm", "uhh", "er", "erm", "hmm", "hm", "mm",
+            "okay", "ok", "oh", "ah", "whoa", "wow", "well", "so", "alright", "all right", "right", "yeah", "yes",
+            "hey", "huh", "oops", "okay so", "um okay", "uh okay", "oh wow", "hmm okay");
+
     private static int repeatCount(String phrase) {
         switch (phrase) {
-            case "twice": case "two times": return 2;
-            case "three times": return 3;
-            case "four times": return 4;
+            case "twice": case "two times": case "to times": case "too times": return 2;
+            case "three times": case "tree times": return 3;
+            case "four times": case "for times": return 4;
             case "five times": return 5;
             default:
                 return Math.max(1, Math.min(MAX_REPEAT, Integer.parseInt(phrase.substring(0, 1))));

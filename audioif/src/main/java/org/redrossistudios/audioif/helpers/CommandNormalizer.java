@@ -90,7 +90,7 @@ public final class CommandNormalizer {
         DIRECTIONS.put("up", "U");
         DIRECTIONS.put("down", "D");
         for (Map.Entry<String, String> direction : new LinkedHashMap<>(DIRECTIONS).entrySet()) {
-            for (String prefix : new String[]{"", "go ", "walk ", "head ", "run ", "move ", "travel "}) {
+            for (String prefix : new String[]{"", "go ", "walk ", "head ", "run ", "move ", "travel ", "swim "}) {
                 putTerminal(prefix + direction.getKey(), direction.getValue());
                 if (!prefix.isEmpty()) {
                     putTerminal(prefix + direction.getValue().toLowerCase(Locale.ROOT), direction.getValue());
@@ -306,6 +306,7 @@ public final class CommandNormalizer {
         putExact("climb downward", "D");
         putExact("crawl up", "U");
         putExact("crawl down", "D");
+        putExact("dive down", "D");
         put("crawl", "climb");
         put("steal", "take");
         // Zork only knows a bare "pray"; "pray at the altar" gets "I don't know the word".

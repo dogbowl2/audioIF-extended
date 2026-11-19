@@ -22,19 +22,21 @@ An Android app for playing interactive fiction (Z-machine games such as Zork) by
     - `WalkthroughIndex` replays the walkthrough, explores the map and caches the result.
     - `GameStateReader` reads game state, and `HeadlessGame` runs a hidden copy of the game.
     - `HintCatalog`, `HintAdvisor` and `HintLoader` choose and speak the hints.
+  - `helpers/`, smart end of speech: `SavaTurnDetector` runs Inworld's SAVA model with ONNX Runtime on a second mic capture; `TurnSegmenter` ports SAVA's turn policy.
   - `src/main/assets/games/`: bundled Zork I–III.
   - `src/main/assets/walkthroughs/`: git-ignored. Fill it with `tools/fetch-walkthroughs.ps1`. Walkthroughs are personal-use only, so never commit them.
+  - `src/main/assets/sava/`: git-ignored (27 MB). Fill it with `tools/sava/fetch-sava.ps1` (Python 3.10+).
 - `zmpp/`: upstream ZMPP 1.5. Keep app changes in `zmpp/src/main/java/org/zmpp/vm/AudioIfExtensions.java`, and record any upstream edit in `zmpp/UPSTREAM.md`.
 - `audioif/src/test/`: JVM unit tests plus `harness/PlayHarness.java`, a headless play-test harness.
 
 ## Environment (Windows dev machine)
-- JDK 17+ (21 in use). Android SDK in `%LOCALAPPDATA%\Android\Sdk`. Set `$env:ANDROID_HOME="$env:LOCALAPPDATA\Android\Sdk"` in each PowerShell call.
+- JDK 17+. Android SDK at `C:\Temp\Android\Sdk`, JDK at `C:\Temp\jdk17\jdk-17.0.21+9`; neither is on PATH. Set `$env:ANDROID_HOME="C:\Temp\Android\Sdk"; $env:JAVA_HOME="C:\Temp\jdk17\jdk-17.0.21+9"` in each PowerShell call.
 - Build: `.\gradlew.bat :audioif:assembleDebug --console=plain -q`. APK: `audioif\build\outputs\apk\debug\audioif-debug.apk`.
 - Install: `& "$env:ANDROID_HOME\platform-tools\adb.exe" install -r <apk>`. Run `adb devices` first; the phone is often unplugged.
 
 ## Tests
 - Fast tests, run after most changes:
-  `.\gradlew.bat :audioif:testDebugUnitTest --console=plain -q --tests "*WalkthroughParserTest" --tests "*InfocomCatalogTest" --tests "*HintAdvisorTest" --tests "*CommandSuggesterTest" --tests "*CommandSessionTest" --tests "*CommandNormalizerTest" --tests "*AutoSaveTest" --tests "*SpeechMatcherTest" --tests "*PlayLogTest"`
+  `.\gradlew.bat :audioif:testDebugUnitTest --console=plain -q --tests "*WalkthroughParserTest" --tests "*InfocomCatalogTest" --tests "*HintAdvisorTest" --tests "*CommandSuggesterTest" --tests "*CommandSessionTest" --tests "*CommandNormalizerTest" --tests "*AutoSaveTest" --tests "*SpeechMatcherTest" --tests "*PlayLogTest" --tests "*TurnSegmenterTest"`
 - Run `--tests "*WalkthroughReplayTest"` (about 30 s; needs the fetched walkthroughs) after changing hints, replay or exploration code. Every seed must cover every step (Zork I 386, II 261, III 184). The report is in `audioif/build/play/walkthrough-*.txt`.
 - Play harness: `--tests "*PlayHarness*" -Pplay=<commands.txt> -PplaySeed=1`. The output is `audioif/build/play/transcript.md`. A line starting with `~` simulates speech alternatives: `~ reed leaf lit | read leaflet`.
 - Don't run the whole unit-test task without `--tests` filters. It's slow.
@@ -50,7 +52,8 @@ An Android app for playing interactive fiction (Z-machine games such as Zork) by
 - Rooms are identified by name plus `#` and the location object (global 0, read from the state vector), because Zork reuses room names such as "Clearing" and "Forest". Speak only the name (`HintAdvisor.roomName`).
 - Zork's map isn't symmetric. Routes use only exits that the replay actually tried. Guessed reverse exits (`CommandSession.guessedExits`) are left out of the hint routes, and `CommandSession.route` uses them only when no route of confirmed exits exists. Exit lists say "maybe back to X" for them.
 - `HintAdvisor.noteMove` records exits the player found blocked (`playerBlocked`), so hint routes and exit lists skip them. The barred trap door above the cellar is only known after the player tries it.
-- `CommandSession.retryWithoutModifier` retries "verb the A with/of/on the B" as "verb the B" or "verb the A" after a parser error, hiding the error like `retryWithNoun`.
+- `CommandSession.retryWithoutModifier` retries "verb the A with/of/on the B" as "verb the B" or "verb the A" after a parser error, hiding the error like `retryWithNoun`. For `ACTING_VERBS` (take, open, move…) it retries only "verb the A", so "take the leaflet out of the mailbox" never becomes "take the mailbox".
+- Walks (`walkTo`, `walkSteps`) stop after a step whose reply matches `WALK_EVENT` (death, thief, darkness, drowning). Hint routes also stop before a non-travel or `RISKY_MOVES` step and speak it as "The next step is: …". "skip this hint" calls `HintAdvisor.skipHinted`.
 - Zork's Loud Room echoes "word word ..." for every non-movement command, which players hear as a stuck loop. `CommandSession.runCommand` adds `ECHO_NOTE` (say "echo" or leave).
 - Hint skips are saved next to the auto-save (`AutoSave.saveHintSkips`, `CommandSession.hintSkips`/`restoreHintSkips`); the session holds them until the `HintAdvisor` finishes loading.
 - `SpeechMatcher.rank` orders alternatives by fewest unknown words, then most words for visible things, then naming a known room, then fewest changes, then fewest app-only words (such as "road", a landmark word Zork doesn't know). `choose` returns the first. When the game rejects the chosen one as not understood, `CommandSession.handleSpeech` retries up to 2 more with no unknown words (parser errors don't use a turn).
@@ -60,6 +63,7 @@ An Android app for playing interactive fiction (Z-machine games such as Zork) by
 - "You'll have to X first" is remembered (`CommandSession.neededFirst`); a following rejected command naming the same thing runs X.
 - Audio mode speaks `Narration.forSpeech(text)`, not the raw text: no "> command" echoes, no room title the description repeats. It also enables `CommandSession.setListThings`, which adds a note naming things here after moves and looks ("You notice …"; the play harness enables it too). The note skips things a short sentence just named, varies its wording, and on a move skips things named on an earlier visit (`thingsNamed`, keyed by room id). `MainActivity.speakThenListen` speaks each paragraph separately with a 400 ms silence between; part ids end in `#part…`, and `onStop` maps them back to the whole reply so tap-to-skip still starts listening.
 - ZMPP's random generator isn't saved in snapshots, so exploring or retrying changes later random events. The replay retries failed steps from earlier snapshots.
+- SAVA ("Smart end of speech") is opt-in (`VoiceSettings.useSavaTurns`) because a second mic capture alongside `SpeechRecognizer` may silence one of them on some phones; unverified on the user's phone. The export patches SAVA's `unfold` (the legacy ONNX exporter breaks it), and the int8 model is per-tensor with the mel MatMuls kept fp32; per-channel int8 and fp16 changed decisions. The speech output lags 3 frames (`TurnSegmenter.LAG`). Inworld's Voice Isolator is too slow for phones (18× slower than real time on a PC).
 - "help" describes the current situation (`CommandSession.situation`: room, visible things, exits, things to try); "hint" gives walkthrough hints; "how do I play" reads the guide. Fetch walkthroughs before building an APK for the phone, or hints are missing.
 - Some walkthrough goals become impossible (Zork I's broken egg is a different object). `HintAdvisor.skipHintedIfStuck` skips a goal when the hinted command gets an "already…" reply but the state doesn't match.
 - The app's own words (help, hint, undo) must not be `SpeechMatcher` candidates, or game verbs such as "hang" get corrected to them.
@@ -78,4 +82,6 @@ An Android app for playing interactive fiction (Z-machine games such as Zork) by
 - Possible next steps:
   - Playtest hints through Zork II and III on the phone.
   - Grow `CommandNormalizer` from new play-harness transcripts.
+  - Open issues from the November agent playtests: exit lists are hard to follow by ear; no suggestions for misspellings in text mode; "how many points"/"I'm lost" aren't handled; "bird s nest" in the spoken note; the Zork II Carousel Room route; silence after Zork III ends; hints drop step conditions.
+  - Test SAVA on the phone (possible microphone conflict with the recognizer).
   - ZMPP 1.5 (2011) is the latest Java version. `zmpp/UPSTREAM.md` explains why the Scala rewrite zmpp2 isn't a drop-in update.

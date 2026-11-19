@@ -35,7 +35,9 @@ import org.redrossistudios.audioif.helpers.SavedGameManager;
 import org.redrossistudios.audioif.helpers.HintLoader;
 import org.redrossistudios.audioif.helpers.Narration;
 import org.redrossistudios.audioif.helpers.PlayLog;
+import org.redrossistudios.audioif.helpers.SavaTurnDetector;
 import org.redrossistudios.audioif.helpers.StoryFileTypeChecker;
+import org.redrossistudios.audioif.helpers.TurnSegmenter;
 import org.redrossistudios.audioif.helpers.ZGame;
 import org.redrossistudios.audioif.models.StoryFileType;
 import org.zmpp.ExecutionControl;
@@ -100,6 +102,82 @@ public class MainActivity extends AppCompatActivity implements TextToSpeech.OnIn
     private long speechEndedAt = 0;
     private String lastPartial = null;
     private final android.os.Handler handler = new android.os.Handler(android.os.Looper.getMainLooper());
+    // Tells when the player has finished a command (opt-in, see VoiceSettings.useSavaTurns).
+    private volatile SavaTurnDetector sava;
+    // With SAVA deciding, the recognizer is asked to wait through pauses this long.
+    private static final int SAVA_RECOGNIZER_SILENCE_MS = 2000;
+
+    private final SavaTurnDetector.Listener savaListener = new SavaTurnDetector.Listener() {
+        @Override
+        public void onSavaSpeech() {
+            if (playLog != null) {
+                playLog.event("sava speech (+" + sinceListen() + " ms)");
+            }
+        }
+
+        @Override
+        public void onSavaTurnEnd(TurnSegmenter.Turn turn, long millisAfterStart) {
+            if (playLog != null) {
+                playLog.event("sava turn end (+" + sinceListen() + " ms, " + turn.reason + ", "
+                        + turn.speechMs + " ms of speech" + (lastPartial != null ? ", heard: " + lastPartial : "") + ")");
+            }
+            // Only cut the recognizer short once it has heard something to recognize.
+            if (isListening && speechRecognizer != null && (speechStarted || lastPartial != null)) {
+                if (sava != null) {
+                    sava.stop();
+                }
+                speechRecognizer.stopListening();
+            }
+        }
+
+        @Override
+        public void onSavaError(String message) {
+            if (playLog != null) {
+                playLog.event("sava stopped: " + message);
+            }
+            SavaTurnDetector failed = sava;
+            sava = null;
+            if (failed != null) {
+                failed.close();
+            }
+        }
+    };
+
+    private void loadSava() {
+        if (!VoiceSettings.useSavaTurns(this) || sava != null) {
+            return;
+        }
+        new Thread(new Runnable() {
+            @Override
+            public void run() {
+                final SavaTurnDetector loaded = SavaTurnDetector.load(MainActivity.this);
+                runOnUiThread(new Runnable() {
+                    @Override
+                    public void run() {
+                        if (isFinishing() || isDestroyed()) {
+                            if (loaded != null) {
+                                loaded.close();
+                            }
+                            return;
+                        }
+                        sava = loaded;
+                        if (playLog != null) {
+                            playLog.event(loaded != null ? "sava loaded" : "sava model missing");
+                        }
+                        if (loaded != null && isListening) {
+                            loaded.start(savaListener);
+                        }
+                    }
+                });
+            }
+        }, "sava-load").start();
+    }
+
+    private void stopSava() {
+        if (sava != null) {
+            sava.stop();
+        }
+    }
 
     private void createRecognizer() {
         if (speechRecognizer != null) {
@@ -128,6 +206,11 @@ public class MainActivity extends AppCompatActivity implements TextToSpeech.OnIn
             intent.putStringArrayListExtra(RecognizerIntent.EXTRA_BIASING_STRINGS,
                     new ArrayList<>(session.speechHints()));
         }
+        if (sava != null) {
+            // SAVA ends the command when it's finished, so the recognizer shouldn't stop at a pause.
+            intent.putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS, SAVA_RECOGNIZER_SILENCE_MS);
+            intent.putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_POSSIBLY_COMPLETE_SILENCE_LENGTH_MILLIS, SAVA_RECOGNIZER_SILENCE_MS);
+        }
         isListening = true;
         speechStarted = false;
         if (quietSince == 0) {
@@ -141,6 +224,9 @@ public class MainActivity extends AppCompatActivity implements TextToSpeech.OnIn
                     : "listen (" + (listenStartedAt - speechEndedAt) + " ms after the app spoke)");
         }
         speechRecognizer.startListening(intent);
+        if (sava != null) {
+            sava.start(savaListener);
+        }
     }
 
     private long sinceListen() {
@@ -148,6 +234,7 @@ public class MainActivity extends AppCompatActivity implements TextToSpeech.OnIn
     }
 
     private void stopVoiceInput() {
+        stopSava();
         if (speechRecognizer != null && isListening) {
             isListening = false;
             speechRecognizer.cancel();
@@ -251,6 +338,7 @@ public class MainActivity extends AppCompatActivity implements TextToSpeech.OnIn
                 return;
             }
             isListening = false;
+            stopSava();
             Log.w("SpeechRecognizer", "Recognition error: " + error);
             if (playLog != null) {
                 playLog.event("speech error " + error + " (" + speechErrorName(error) + ", +" + sinceListen() + " ms"
@@ -313,6 +401,7 @@ public class MainActivity extends AppCompatActivity implements TextToSpeech.OnIn
                 return;
             }
             isListening = false;
+            stopSava();
             ArrayList<String> matches = results.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION);
             if (matches == null || matches.isEmpty()) {
                 retryOrPause();
@@ -431,6 +520,7 @@ public class MainActivity extends AppCompatActivity implements TextToSpeech.OnIn
             session.setListThings(true);
             HintLoader.start(this, filePath, session);
             playLog = new PlayLog(logFolder(this), new File(filePath).getName());
+            loadSava();
             button.setOnClickListener(new View.OnClickListener() {
                 @Override
                 public void onClick(View view) {
@@ -531,6 +621,10 @@ public class MainActivity extends AppCompatActivity implements TextToSpeech.OnIn
     @Override
     public void onDestroy() {
         handler.removeCallbacksAndMessages(null);
+        if (sava != null) {
+            sava.close();
+            sava = null;
+        }
         if (speechRecognizer != null) {
             isListening = false;
             speechRecognizer.destroy();

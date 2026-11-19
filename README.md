@@ -141,6 +141,14 @@ The core of this application uses the ZMPP interpreter project: https://sourcefo
   - Saved games now go next to the game file, with its extension replaced by `.sav`. The old code cut the path at the first dot, which broke for paths containing dots such as the app's private folder.
 - Automatic resume. After every command, and whenever you leave the game screen, `AutoSave` stores the game state (Quetzal format, via `ZGame.saveState`) and the last text shown in the app's private `files/autosave` folder, one save per story file. Reopening the same game restores it, says "Welcome back…", and reads the recap. To start over, say or type `restart`. A save from a different release of a story file is ignored, and the save is deleted when a game ends. This is separate from the in-game `save`/`restore` commands, which still write a `.sav` file next to the game.
 - Reading voice screen (`VoiceSettingsActivity`): lists the TTS engine's installed voices for the device language, with speed and pitch sliders (0.5x–2.0x). `VoiceSettings` saves the choice and applies it in audio mode after `setLanguage`. A saved voice that's later uninstalled is ignored.
+- Smart end of speech (opt-in switch on the Reading voice screen). Inworld's open-source [SAVA](https://huggingface.co/inworld/sava) model runs on the phone and tells when you've finished a command, so a pause in the middle ("take the leaflet… and read it") doesn't cut you off, and the recognizer doesn't wait its usual silence after you're done. See "Smart end of speech" below.
+- Fixes from three AI-agent playtests of Zork I–III (about 650 typed commands; 18, 13 and 10 rejected inputs):
+  - "Skip this hint", "a different hint", "I already did that" or "that's done" skips the hinted step and gives the next one (`HintAdvisor.skipHinted`). Hints sometimes got stuck on a step that had been undone, such as the egg taken back out of the trophy case.
+  - Walks ("go to X" and hint routes) stop when something happens on the way (death, the thief, darkness, drowning) and say "Something happened on the way, so I stopped here." Hint routes stop before a step that isn't plain travel or can't be taken back (jump, dive, leap) and say "The next step is: … Say it if you want to go on."
+  - `retryWithoutModifier` no longer retries "take the leaflet out of the mailbox" as "take the mailbox" or "open the egg with the knife" as "open the knife": for take, open, move, push, pull, turn, close and light only the first thing is retried.
+  - A clause made only of interjections ("um, take the lamp", "okay, north") is dropped instead of being sent.
+  - Misheard repeat counts: "to/too times" (2), "tree times" (3), "for times" (4).
+  - "swim west" means west; "dive down" means down.
 - The game list scan (`FileScanner`) runs on a background thread with a "Searching for games..." spinner. It used to walk all of shared storage on the UI thread, which froze audio mode (an ANR) on phones with many files. It now skips hidden folders and `Android/`, and stops 8 folders deep.
 - The menu no longer opens the "All files access" settings page on every launch. Bundled and downloaded games don't need that permission, so the app asks once with an explanation and an "Open settings" button.
 - "Classic adventure" visual theme. A dark ink/parchment palette with amber accents (`res/values/colors.xml`, `styles.xml`), serif story text, rounded buttons with Material icons, and styled dialogs. The menu was redesigned with a title header and a large primary audio-mode button. Audio mode shows a status pill ("Reading… tap to skip", "Listening… say a command", "Paused — tap the story to listen"). In text mode, command echoes are shown in amber. The game picker is a compact titled dialog that hides file extensions.
@@ -214,6 +222,27 @@ How it works (`helpers/WalkthroughParser`, `WalkthroughIndex`, `HintCatalog`, `H
 - A goal is a step that changes lasting state without moving the player. The next hint is the first goal whose changes aren't already true in your game, so hints follow your progress even if you play in a different order.
 - The first load takes a while (up to tens of seconds on a phone). Until then "hint" says hints are loading. The result is cached in the app's `files/hints` folder by game checksum, so later loads are instant.
 - Only Z-machine story files (`.z1`–`.z8`) with a matching walkthrough get hints.
+
+### Smart end of speech
+
+[SAVA](https://huggingface.co/inworld/sava) is Inworld's open-source (Apache 2.0) streaming voice activity and end-of-turn model. It's 27 MB, so like the walkthroughs it isn't stored in this repository. For a personal build, export it before building:
+
+```
+powershell -File tools/sava/fetch-sava.ps1
+```
+
+This needs Python 3.10+. It creates `tools/sava/.venv`, downloads the weights, exports SAVA's one-frame streaming step to ONNX (`tools/sava/export_sava_onnx.py`) and copies `sava_step_int8.onnx` into `audioif/src/main/assets/sava/`, which is git-ignored. Without it the setting is greyed out.
+
+How it works (`helpers/SavaTurnDetector`, `TurnSegmenter`):
+- While the recognizer listens, a second microphone capture feeds 40 ms frames (16 kHz) to the model with ONNX Runtime. Each frame takes about 3 ms on a PC. The model returns a speech probability (for the frame 3 steps earlier) and an end-of-turn probability.
+- `TurnSegmenter` is a Java port of SAVA's reference policy: a turn starts at speech (probability 0.5 or more) and ends when the end-of-turn probability reaches 0.9, or after 1.6 s of silence. Turns shorter than 400 ms, or without 200 ms of confident speech, are ignored as noise.
+- When a turn ends, the app stops the recognizer, which then returns its result at once. The recognizer's own end-of-speech silence is raised to 2 s, so it doesn't cut off a pause that SAVA knows isn't the end.
+- The play log records "sava speech", "sava turn end (…)" and "sava stopped" events, to compare with the recognizer's timing.
+- It's off by default: some phones silence one of two apps or components that record at the same time, which would stop the recognizer hearing you. Try it on your phone, and turn it off if listening stops working.
+- The export: the legacy ONNX exporter mis-exports the `unfold` in SAVA's mel front end, so the script builds the windows from slices during export. The int8 model quantizes weights per tensor and keeps the mel front end in fp32; per-channel int8 and fp16 versions changed speech decisions. On test speech (`audioif/src/test/resources/sava/`) it makes the same turn decisions as the original. `TurnSegmenterTest` checks the Java segmenter against SAVA's Python segmenter on those outputs.
+- ONNX Runtime adds about 35 MB of native code per CPU type, so the APK only includes arm64 (phones) and x86_64 (emulator) and compresses native libraries.
+
+Inworld's Voice Isolator (noise removal) was also evaluated. Its real-time model (58M parameters, 48 kHz) took 92 s to process 5 s of audio on a 20-thread PC, 18 times slower than real time, so it can't run on a phone and isn't included.
 
 To pull in changes from the original project:
 

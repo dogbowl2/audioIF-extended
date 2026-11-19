@@ -58,6 +58,16 @@
             android:text="Reset to default" />
     </LinearLayout>
 
+    <androidx.appcompat.widget.SwitchCompat
+        android:id="@+id/savaSwitch"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:paddingTop="16dp"
+        android:text="Smart end of speech (SAVA): waits through pauses, answers sooner when you're done"
+        android:fontFamily="serif"
+        android:textColor="@color/parchment"
+        android:textSize="16sp" />
+
     <TextView
         android:layout_width="match_parent"
         android:layout_height="wrap_content"

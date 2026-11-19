@@ -15,6 +15,7 @@ public final class VoiceSettings {
     private static final String KEY_VOICE = "voiceName";
     private static final String KEY_RATE = "rate";
     private static final String KEY_PITCH = "pitch";
+    private static final String KEY_SAVA = "savaTurns";
 
     public static final float DEFAULT_RATE = 1.0f;
     public static final float DEFAULT_PITCH = 1.0f;
@@ -47,6 +48,17 @@ public final class VoiceSettings {
 
     public static void setPitch(Context context, float pitch) {
         prefs(context).edit().putFloat(KEY_PITCH, pitch).apply();
+    }
+
+    // Whether audio mode uses the SAVA model to tell when the player has finished a command.
+    // Off by default: it opens the microphone alongside the speech recognizer, which not every
+    // phone allows.
+    public static boolean useSavaTurns(Context context) {
+        return prefs(context).getBoolean(KEY_SAVA, false);
+    }
+
+    public static void setSavaTurns(Context context, boolean enabled) {
+        prefs(context).edit().putBoolean(KEY_SAVA, enabled).apply();
     }
 
     public static void reset(Context context) {

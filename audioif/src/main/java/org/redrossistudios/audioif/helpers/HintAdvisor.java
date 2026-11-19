@@ -284,6 +284,15 @@ public final class HintAdvisor {
         }
     }
 
+    /** The player asked to skip the last hinted step ("skip this hint"); false if there was none. */
+    public synchronized boolean skipHinted() {
+        if (lastTarget < 0) {
+            return false;
+        }
+        skipped.add(lastTarget);
+        return true;
+    }
+
     private static String plain(String command) {
         String text = key(command.toLowerCase(Locale.ROOT).replaceAll("\\b(the|a|an)\\b", " ")
                 .replaceAll("\\s+", " ").trim());

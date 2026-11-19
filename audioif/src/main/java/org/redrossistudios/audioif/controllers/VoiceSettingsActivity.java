@@ -12,9 +12,11 @@ import android.widget.TextView;
 import android.widget.Toast;
 
 import androidx.appcompat.app.AppCompatActivity;
+import androidx.appcompat.widget.SwitchCompat;
 
 import org.redrossistudios.audioif.R;
 import org.redrossistudios.audioif.helpers.EdgeToEdge;
+import org.redrossistudios.audioif.helpers.SavaTurnDetector;
 import org.redrossistudios.audioif.helpers.VoiceSettings;
 
 import java.util.ArrayList;
@@ -81,8 +83,17 @@ public class VoiceSettingsActivity extends AppCompatActivity implements TextToSp
         pitchBar.setOnSeekBarChangeListener(barListener);
 
         previewButton.setOnClickListener(v -> preview());
+        SwitchCompat savaSwitch = findViewById(R.id.savaSwitch);
+        if (SavaTurnDetector.isBundled(this)) {
+            savaSwitch.setChecked(VoiceSettings.useSavaTurns(this));
+            savaSwitch.setOnCheckedChangeListener((button, checked) -> VoiceSettings.setSavaTurns(this, checked));
+        } else {
+            savaSwitch.setEnabled(false);
+            savaSwitch.setText("Smart end of speech (SAVA): not in this build (see tools/sava)");
+        }
         resetButton.setOnClickListener(v -> {
             VoiceSettings.reset(this);
+            savaSwitch.setChecked(false);
             rateBar.setProgress(toProgress(VoiceSettings.DEFAULT_RATE));
             pitchBar.setProgress(toProgress(VoiceSettings.DEFAULT_PITCH));
             if (tts != null) {

@@ -26,6 +26,11 @@ build/
 # Third-party walkthroughs fetched by tools/fetch-walkthroughs.ps1 (personal builds only)
 audioif/src/main/assets/walkthroughs/
 
+# SAVA model exported by tools/sava/fetch-sava.ps1 (Apache 2.0, but 27 MB)
+audioif/src/main/assets/sava/
+tools/sava/.venv/
+tools/sava/build/
+
 # Signing files
 .signing/
 
@@ -128,4 +133,4 @@ fabric.properties
 
 !/gradle/wrapper/gradle-wrapper.jar
 
-# End of https://www.gitignore.io/api/androidstudio
+# End of https://www.gitignore.io/api/androidstudiotools/sava/__pycache__/
